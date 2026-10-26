@@ -1,0 +1,121 @@
+{
+  "metadata": {
+    "architecture": "aarch64",
+    "checkpointing": "SQLite synchronous FULL; progress interval 1s and each work-unit completion",
+    "chunk_size": 16384,
+    "curve": "P-256",
+    "engine": "ec-sequential",
+    "logical_cpus": 10,
+    "openssl": "OpenSSL 3.6.4 25 Aug 2026",
+    "sqlite": "3.54.1"
+  },
+  "repetitions": 3,
+  "candidates_per_run_per_worker_setting": "5000000",
+  "samples": [
+    [
+      {
+        "seconds": 1.5881305000000001,
+        "unique_candidates": "5000000",
+        "unique_candidates_per_second": 3148355.8813334294,
+        "workers": 1
+      },
+      {
+        "seconds": 0.858322583,
+        "unique_candidates": "5000000",
+        "unique_candidates_per_second": 5825315.678545999,
+        "workers": 2
+      },
+      {
+        "seconds": 0.434271834,
+        "unique_candidates": "5000000",
+        "unique_candidates_per_second": 11513525.880658425,
+        "workers": 4
+      },
+      {
+        "seconds": 0.369636334,
+        "unique_candidates": "5000000",
+        "unique_candidates_per_second": 13526808.757929083,
+        "workers": 8
+      }
+    ],
+    [
+      {
+        "seconds": 1.650616417,
+        "unique_candidates": "5000000",
+        "unique_candidates_per_second": 3029171.374102479,
+        "workers": 1
+      },
+      {
+        "seconds": 0.887829875,
+        "unique_candidates": "5000000",
+        "unique_candidates_per_second": 5631709.565979631,
+        "workers": 2
+      },
+      {
+        "seconds": 0.447176708,
+        "unique_candidates": "5000000",
+        "unique_candidates_per_second": 11181262.151068924,
+        "workers": 4
+      },
+      {
+        "seconds": 0.362068584,
+        "unique_candidates": "5000000",
+        "unique_candidates_per_second": 13809538.36083166,
+        "workers": 8
+      }
+    ],
+    [
+      {
+        "seconds": 1.644171834,
+        "unique_candidates": "5000000",
+        "unique_candidates_per_second": 3041044.6746529047,
+        "workers": 1
+      },
+      {
+        "seconds": 0.863506042,
+        "unique_candidates": "5000000",
+        "unique_candidates_per_second": 5790347.440325148,
+        "workers": 2
+      },
+      {
+        "seconds": 0.442691042,
+        "unique_candidates": "5000000",
+        "unique_candidates_per_second": 11294558.790733336,
+        "workers": 4
+      },
+      {
+        "seconds": 0.394086042,
+        "unique_candidates": "5000000",
+        "unique_candidates_per_second": 12687584.606206376,
+        "workers": 8
+      }
+    ]
+  ],
+  "summary": [
+    {
+      "workers": 1,
+      "median_unique_candidates_per_second": 3041044.6746529047,
+      "minimum": 3029171.374102479,
+      "maximum": 3148355.8813334294
+    },
+    {
+      "workers": 2,
+      "median_unique_candidates_per_second": 5790347.440325148,
+      "minimum": 5631709.565979631,
+      "maximum": 5825315.678545999
+    },
+    {
+      "workers": 4,
+      "median_unique_candidates_per_second": 11294558.790733336,
+      "minimum": 11181262.151068924,
+      "maximum": 11513525.880658425
+    },
+    {
+      "workers": 8,
+      "median_unique_candidates_per_second": 13526808.757929083,
+      "minimum": 12687584.606206376,
+      "maximum": 13809538.36083166
+    }
+  ],
+  "note": "Repeated local end-to-end measurements on this machine; other curves and hardware will differ."
+}

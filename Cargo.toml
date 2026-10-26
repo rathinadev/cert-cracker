@@ -1,0 +1,32 @@
+[package]
+name = "cert-cracker"
+version = "0.2.0"
+edition = "2024"
+description = "Local public-key analysis with durable multicore bounded recovery"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+ctrlc = { version = "3", features = ["termination"] }
+crossbeam-channel = "0.5"
+fs2 = "0.4"
+hex = "0.4"
+num-bigint = { version = "0.4", features = ["serde"] }
+num-integer = "0.1"
+num-traits = "0.2"
+openssl = "0.10"
+pem = "3"
+rayon = "1"
+rusqlite = { version = "0.41", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[lints.rust]
+unsafe_code = "forbid"

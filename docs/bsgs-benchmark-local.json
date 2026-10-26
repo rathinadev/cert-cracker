@@ -1,0 +1,71 @@
+{
+  "metadata": {
+    "architecture": "aarch64",
+    "default_workers": 9,
+    "gpu_backend": null,
+    "logical_cpus": 10,
+    "openssl": "OpenSSL 3.6.4 25 Aug 2026",
+    "os": "macos",
+    "sqlite": "3.54.1",
+    "version": "0.2.0"
+  },
+  "curve": "P-256",
+  "workers": 4,
+  "interval": "[1,100000001)",
+  "target_outside_interval": true,
+  "samples": [
+    {
+      "repetition": 1,
+      "method": "sequential",
+      "seconds": 9.339993000001414,
+      "covered_candidates": "100000000",
+      "giant_lookups": null,
+      "table_entries": null
+    },
+    {
+      "repetition": 1,
+      "method": "bsgs",
+      "seconds": 0.1096424580027815,
+      "covered_candidates": "100000000",
+      "giant_lookups": "10000",
+      "table_entries": 10000
+    },
+    {
+      "repetition": 2,
+      "method": "sequential",
+      "seconds": 10.801005375004024,
+      "covered_candidates": "100000000",
+      "giant_lookups": null,
+      "table_entries": null
+    },
+    {
+      "repetition": 2,
+      "method": "bsgs",
+      "seconds": 0.11586579099821392,
+      "covered_candidates": "100000000",
+      "giant_lookups": "10000",
+      "table_entries": 10000
+    },
+    {
+      "repetition": 3,
+      "method": "sequential",
+      "seconds": 11.100754457998846,
+      "covered_candidates": "100000000",
+      "giant_lookups": null,
+      "table_entries": null
+    },
+    {
+      "repetition": 3,
+      "method": "bsgs",
+      "seconds": 0.10471537500416161,
+      "covered_candidates": "100000000",
+      "giant_lookups": "10000",
+      "table_entries": 10000
+    }
+  ],
+  "sequential_median_seconds": 10.801005375004024,
+  "bsgs_median_seconds": 0.1096424580027815,
+  "median_speedup": 98.51115682512349,
+  "independent_P384_recovery_public_key_match": true,
+  "note": "Local repeated end-to-end comparisons including process startup, planning, SQLite and BSGS table construction. Algebraic coverage is not brute-force attempt throughput."
+}
