@@ -1,6 +1,6 @@
 # Interval BSGS implementation
 
-Version 0.2.0 implements the BSGS portion of milestone M4. Pollard kangaroo remains a separate upcoming engine.
+Version 0.2.0 introduced the BSGS portion of milestone M4. Version 0.3.0 also provides a separate experimental native [kangaroo engine](KANGAROO.md).
 
 ## Mathematics
 
@@ -55,7 +55,7 @@ Work-unit bounds and cursors are giant indices, not private-scalar counters. A c
 
 ## Compatibility
 
-Schema 3 adds a separate `engine_states` table. Sequential specifications omit the new optional BSGS configuration when serialized, preserving version-0.1 specification hashes. Schemas 1 and 2 migrate transactionally, and existing sequential work can resume. Earlier executables intentionally refuse the newer schema.
+Schema 3 introduced the separate `engine_states` table. Version 0.3.0 upgrades to schema 4 for kangaroo state; this preserves BSGS manifests and artifacts. Sequential specifications omit optional engine configurations when serialized, preserving version-0.1 specification hashes; BSGS specifications omit the new kangaroo field and retain their hashes. Older schemas migrate transactionally, and earlier work can resume. Earlier executables intentionally refuse newer schemas.
 
 BSGS manifests and files are format version 1. A mismatch in job hash, format, metadata, byte count or checksum is rejected. Copies of a checkpoint must preserve the database and all referenced artifact files together, with SQLite handled through its supported backup mechanism or after a clean stop.
 

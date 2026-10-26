@@ -105,6 +105,9 @@ fn worker(
 }
 
 pub fn run(store: &mut Store, job: i64, options: RunOptions) -> Result<serde_json::Value> {
+    if store.spec(job)?.kangaroo.is_some() {
+        return crate::kangaroo::run(store, job, options);
+    }
     let started = Instant::now();
     ensure!(
         (1..=256).contains(&options.workers),

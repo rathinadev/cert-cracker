@@ -2,6 +2,7 @@ pub mod analysis;
 pub mod bsgs;
 pub mod crypto;
 pub mod import;
+pub mod kangaroo;
 pub mod model;
 pub mod planner;
 pub mod search;

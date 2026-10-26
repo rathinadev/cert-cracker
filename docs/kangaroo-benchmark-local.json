@@ -1,0 +1,128 @@
+{
+  "metadata": {
+    "architecture": "aarch64",
+    "default_workers": 9,
+    "gpu_backend": null,
+    "logical_cpus": 10,
+    "openssl": "OpenSSL 3.6.4 25 Aug 2026",
+    "os": "macos",
+    "sqlite": "3.54.1",
+    "version": "0.3.0"
+  },
+  "curve": "P-256",
+  "interval": "[1,1000001)",
+  "target_outside_interval": true,
+  "logical_attempts": 8,
+  "point_capacity_per_attempt": 128,
+  "memory_budget_mib": 32,
+  "samples": [
+    {
+      "repetition": 1,
+      "covered_candidates": null,
+      "engine": "ec-kangaroo",
+      "giant_lookups": null,
+      "seconds": 0.714118875,
+      "unique_candidates": null,
+      "unique_candidates_per_second": null,
+      "walk_steps": "128000",
+      "walk_steps_per_second": 179241.8664189488,
+      "workers": 1
+    },
+    {
+      "repetition": 1,
+      "covered_candidates": null,
+      "engine": "ec-kangaroo",
+      "giant_lookups": null,
+      "seconds": 0.198150125,
+      "unique_candidates": null,
+      "unique_candidates_per_second": null,
+      "walk_steps": "128000",
+      "walk_steps_per_second": 645974.863755448,
+      "workers": 4
+    },
+    {
+      "repetition": 2,
+      "covered_candidates": null,
+      "engine": "ec-kangaroo",
+      "giant_lookups": null,
+      "seconds": 0.701820375,
+      "unique_candidates": null,
+      "unique_candidates_per_second": null,
+      "walk_steps": "128000",
+      "walk_steps_per_second": 182382.8497427137,
+      "workers": 1
+    },
+    {
+      "repetition": 2,
+      "covered_candidates": null,
+      "engine": "ec-kangaroo",
+      "giant_lookups": null,
+      "seconds": 0.197917166,
+      "unique_candidates": null,
+      "unique_candidates_per_second": null,
+      "walk_steps": "128000",
+      "walk_steps_per_second": 646735.210426366,
+      "workers": 4
+    },
+    {
+      "repetition": 3,
+      "covered_candidates": null,
+      "engine": "ec-kangaroo",
+      "giant_lookups": null,
+      "seconds": 0.714836083,
+      "unique_candidates": null,
+      "unique_candidates_per_second": null,
+      "walk_steps": "128000",
+      "walk_steps_per_second": 179062.02980523018,
+      "workers": 1
+    },
+    {
+      "repetition": 3,
+      "covered_candidates": null,
+      "engine": "ec-kangaroo",
+      "giant_lookups": null,
+      "seconds": 0.223056209,
+      "unique_candidates": null,
+      "unique_candidates_per_second": null,
+      "walk_steps": "128000",
+      "walk_steps_per_second": 573846.3886472669,
+      "workers": 4
+    }
+  ],
+  "median_seconds": {
+    "1": 0.714118875,
+    "4": 0.198150125
+  },
+  "median_four_worker_speedup": 3.6039284608071784,
+  "independent_recoveries": [
+    {
+      "curve": "P-256",
+      "laboratory_scalar": "987654",
+      "interval": "[1,1000001)",
+      "seconds": 0.06707512499997392,
+      "external_openssl_public_key_match": true
+    },
+    {
+      "curve": "P-384",
+      "laboratory_scalar": "98765432",
+      "interval": "[1,100000001)",
+      "seconds": 2.397634291999566,
+      "external_openssl_public_key_match": true
+    },
+    {
+      "curve": "P-521",
+      "laboratory_scalar": "987654",
+      "interval": "[1,1000001)",
+      "seconds": 0.17393604200333357,
+      "external_openssl_public_key_match": true
+    },
+    {
+      "curve": "secp256k1",
+      "laboratory_scalar": "987654",
+      "interval": "[1,1000001)",
+      "seconds": 0.12992816699988907,
+      "external_openssl_public_key_match": true
+    }
+  ],
+  "note": "Repeated end-to-end bounded walk measurements, including jump setup and SQLite checkpoints. No exhaustive coverage is claimed. Worker scaling applies to independent attempts and is hardware-specific."
+}

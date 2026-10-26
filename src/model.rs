@@ -62,6 +62,20 @@ pub struct SearchSpec {
     // Omitted for old sequential jobs so their existing specification hashes remain valid.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bsgs: Option<BsgsConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kangaroo: Option<KangarooConfig>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct KangarooConfig {
+    pub state_version: u32,
+    pub seed: String,
+    pub attempts: u32,
+    pub steps_per_phase: u64,
+    pub distinguished_bits: u8,
+    pub max_points: u32,
+    pub memory_budget_bytes: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -92,6 +106,7 @@ impl SearchSpec {
             end: canonical(&b),
             chunk_size,
             bsgs: None,
+            kangaroo: None,
         })
     }
     pub fn bsgs(
@@ -107,10 +122,24 @@ impl SearchSpec {
         spec.validate()?;
         Ok(spec)
     }
+    pub fn kangaroo(
+        target_id: String,
+        start: &str,
+        end: &str,
+        config: KangarooConfig,
+    ) -> Result<Self> {
+        let mut spec = Self::sequential(target_id, start, end, 1)?;
+        spec.method = "ec-kangaroo".into();
+        spec.kangaroo = Some(config);
+        spec.validate()?;
+        Ok(spec)
+    }
     pub fn work_bounds(&self) -> Result<(BigUint, BigUint)> {
         let start = number(&self.start)?;
         let end = number(&self.end)?;
-        if let Some(config) = &self.bsgs {
+        if let Some(config) = &self.kangaroo {
+            Ok((BigUint::zero(), config.attempts.into()))
+        } else if let Some(config) = &self.bsgs {
             let m = BigUint::from(config.baby_steps);
             ensure!(!m.is_zero(), "zero baby-step count");
             Ok((BigUint::zero(), (&end - &start + &m - 1u8) / m))
@@ -124,7 +153,10 @@ impl SearchSpec {
             "incompatible engine version"
         );
         ensure!(
-            matches!(self.method.as_str(), "ec-sequential" | "ec-bsgs"),
+            matches!(
+                self.method.as_str(),
+                "ec-sequential" | "ec-bsgs" | "ec-kangaroo"
+            ),
             "unsupported checkpoint engine: {}",
             self.method
         );
@@ -155,6 +187,50 @@ impl SearchSpec {
             );
             normalized.method = self.method.clone();
             normalized.bsgs = self.bsgs.clone();
+        }
+        if self.method == "ec-kangaroo" {
+            let config = self
+                .kangaroo
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("missing kangaroo parameters"))?;
+            ensure!(
+                self.chunk_size == 1,
+                "kangaroo work units must contain one logical attempt"
+            );
+            ensure!(
+                config.state_version == 1,
+                "incompatible kangaroo state version"
+            );
+            ensure!(
+                config.seed.len() == 64
+                    && config
+                        .seed
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+                "kangaroo seed must be 64 lowercase hexadecimal characters"
+            );
+            ensure!(
+                (1..=1024).contains(&config.attempts),
+                "kangaroo attempts must be 1..1024"
+            );
+            ensure!(
+                (1..=u64::MAX / 4).contains(&config.steps_per_phase),
+                "invalid kangaroo step budget"
+            );
+            ensure!(
+                config.distinguished_bits <= 40,
+                "distinguished bits must be 0..40"
+            );
+            ensure!(
+                (16..=65536).contains(&config.max_points),
+                "kangaroo point capacity must be 16..65536"
+            );
+            ensure!(
+                (1_048_576..=68_719_476_736).contains(&config.memory_budget_bytes),
+                "kangaroo memory budget must be 1 MiB..64 GiB"
+            );
+            normalized.method = self.method.clone();
+            normalized.kangaroo = self.kangaroo.clone();
         }
         ensure!(*self == normalized, "noncanonical search specification");
         Ok(())

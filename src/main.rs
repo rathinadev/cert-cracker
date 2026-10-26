@@ -2,7 +2,7 @@ use anyhow::{Context, Result, ensure};
 use cert_cracker::{
     analysis, crypto, import,
     model::{Target, number},
-    planner::{self, PlanOptions},
+    planner::{self, KangarooOptions, PlanOptions},
     search::{self, RunOptions},
     storage::{Store, private_file},
 };
@@ -145,14 +145,41 @@ struct PlanArgs {
 
 #[derive(Args)]
 struct AlgorithmArgs {
-    #[arg(long,default_value="auto",value_parser=["auto","sequential","bsgs"])]
+    #[arg(long,default_value="auto",value_parser=["auto","sequential","bsgs","kangaroo"])]
     method: String,
-    /// BSGS table/workspace budget; process runtime baseline is additional.
+    /// Engine table/workspace budget; process runtime baseline is additional.
     #[arg(long, default_value_t = 256)]
     memory_mib: u64,
     /// Explicit baby-step count; smaller tables require more giant lookups.
     #[arg(long)]
     baby_steps: Option<u64>,
+    /// Logical kangaroo attempts (default 16); stable across worker-count changes.
+    #[arg(long)]
+    kangaroo_attempts: Option<u32>,
+    /// Maximum additions per phase per attempt (default 8*ceil(sqrt(width))).
+    #[arg(long)]
+    kangaroo_steps: Option<u64>,
+    /// Reproducible 32-byte seed as 64 lowercase hex characters (default all zeros).
+    #[arg(long)]
+    kangaroo_seed: Option<String>,
+    /// Distinguished-point predicate bits, 0..40 (default chosen from capacity).
+    #[arg(long)]
+    kangaroo_dp_bits: Option<u8>,
+    /// Maximum saved tame points per logical attempt, 16..65536.
+    #[arg(long)]
+    kangaroo_max_points: Option<u32>,
+}
+
+impl AlgorithmArgs {
+    fn kangaroo_options(&self) -> KangarooOptions {
+        KangarooOptions {
+            attempts: self.kangaroo_attempts,
+            steps_per_phase: self.kangaroo_steps,
+            seed: self.kangaroo_seed.clone(),
+            distinguished_bits: self.kangaroo_dp_bits,
+            max_points: self.kangaroo_max_points,
+        }
+    }
 }
 
 #[derive(Args)]
@@ -323,9 +350,10 @@ fn main_result() -> Result<()> {
         Command::Capabilities => emit(&json!({"version":env!("CARGO_PKG_VERSION"),"engines":[
             {"id":"ec-sequential","status":"implemented","hardware":"multicore CPU","checkpoint":"exact per-unit next candidate; uncommitted tails replay","curves":"named EC groups available through OpenSSL; release tests cover P-256/P-384/P-521/secp256k1","methods":["incremental point addition","independent scalar-multiplication verification"]},
             {"id":"ec-bsgs","status":"implemented","hardware":"multicore CPU with one shared immutable table","curves":["P-256","P-384","P-521","secp256k1"],"checkpoint":"durable baby-step ledger, checksummed ready table, exact giant-step cursors","memory_limit":"table/workspace budget; runtime baseline RSS excluded"},
+            {"id":"ec-kangaroo","status":"experimental","hardware":"multicore CPU; independent logical two-walk attempts","curves":["P-256","P-384","P-521","secp256k1"],"checkpoint":"atomic checksummed walk positions, distances, steps and tame distinguished-point maps; worker count can change","coverage":"probabilistic budgets only; no exhaustive scalar coverage","memory_limit":"active maps and checkpoint workspace; runtime/native baseline RSS and SQLite cache excluded"},
             {"id":"rsa-audit","status":"implemented","methods":["pairwise shared-prime GCD","Wiener","bounded trial division","bounded Fermat"],"limits":{"targets":4096,"max_trial_limit":1000000,"max_fermat_iterations":1000000},"checkpoint":"short bounded audit reruns; no resumable factorization engine"}],
             "inspection":["EC","RSA","RSA-PSS","DSA","Ed25519","Ed448","DH","X25519","X448","other backend-supported public keys"],
-            "not_implemented":["kangaroo","GPU kernels","signature nonce recovery","EdDSA seed recovery","ECM/NFS adapters","distributed workers","dashboard","encrypted secret vault","certificate chain trust validation"],
+            "not_implemented":["cooperative kangaroo herds or external adapter","GPU kernels","signature nonce recovery","EdDSA seed recovery","ECM/NFS adapters","distributed workers","dashboard","encrypted secret vault","certificate chain trust validation"],
             "secret_storage":"private state files; not encrypted"})),
         Command::Doctor => emit(
             &json!({"version":env!("CARGO_PKG_VERSION"),"openssl":openssl::version::version(),"sqlite":rusqlite::version(),"logical_cpus":std::thread::available_parallelism().map_or(1,|n|n.get()),"default_workers":default_workers(),"architecture":std::env::consts::ARCH,"os":std::env::consts::OS,"gpu_backend":null}),
@@ -371,6 +399,7 @@ fn main_result() -> Result<()> {
                     method: &args.algorithm.method,
                     memory_mib: args.algorithm.memory_mib,
                     baby_steps: args.algorithm.baby_steps,
+                    kangaroo: Some(&args.algorithm.kangaroo_options()),
                     workers: args.workers,
                 },
             )?;
@@ -390,6 +419,7 @@ fn main_result() -> Result<()> {
                     method: &args.algorithm.method,
                     memory_mib: args.algorithm.memory_mib,
                     baby_steps: args.algorithm.baby_steps,
+                    kangaroo: Some(&args.algorithm.kangaroo_options()),
                     workers: args.workers,
                 },
             )?;
@@ -418,6 +448,7 @@ fn main_result() -> Result<()> {
                     method: &args.algorithm.method,
                     memory_mib: args.algorithm.memory_mib,
                     baby_steps: args.algorithm.baby_steps,
+                    kangaroo: Some(&args.algorithm.kangaroo_options()),
                     workers: args.resources.workers,
                 },
             )?;
@@ -514,6 +545,7 @@ fn main_result() -> Result<()> {
                         method: &algorithm.method,
                         memory_mib: algorithm.memory_mib,
                         baby_steps: algorithm.baby_steps,
+                        kangaroo: Some(&algorithm.kangaroo_options()),
                         workers,
                     },
                 )?;
@@ -531,17 +563,18 @@ fn main_result() -> Result<()> {
                 )?;
                 let secs = started.elapsed().as_secs_f64();
                 ensure!(
-                    report["covered_candidates"]
-                        .as_str()
-                        .and_then(|s| s.parse::<u64>().ok())
-                        == Some(candidates)
-                        && report["status"] == "exhausted",
+                    (report["outcome"] == "probabilistic_budget_exhausted")
+                        || (report["covered_candidates"]
+                            .as_str()
+                            .and_then(|s| s.parse::<u64>().ok())
+                            == Some(candidates)
+                            && report["status"] == "exhausted"),
                     "benchmark coverage verification failed"
                 );
-                measurements.push(json!({"workers":workers,"seconds":secs,"engine":store.spec(job)?.method,"covered_candidates":candidates.to_string(),"giant_lookups":report["giant_steps_completed"],"unique_candidates":report["tested_candidates"],"unique_candidates_per_second":if report["tested_candidates"].is_string() {Some(candidates as f64/secs)} else {None}}));
+                measurements.push(json!({"workers":workers,"seconds":secs,"engine":store.spec(job)?.method,"covered_candidates":report["covered_candidates"],"walk_steps":report["walk_steps_completed"],"walk_steps_per_second":report["walk_steps_completed"].as_str().and_then(|s|s.parse::<f64>().ok()).map(|n|n/secs),"giant_lookups":report["giant_steps_completed"],"unique_candidates":report["tested_candidates"],"unique_candidates_per_second":if report["tested_candidates"].is_string() {Some(candidates as f64/secs)} else {None}}));
             }
             emit(
-                &json!({"requested_method":algorithm.method,"curve":curve,"openssl":openssl::version::version(),"sqlite":rusqlite::version(),"architecture":std::env::consts::ARCH,"logical_cpus":std::thread::available_parallelism().map_or(1,|n|n.get()),"checkpointing":"SQLite synchronous FULL; includes table construction for BSGS","chunk_size":16384,"measurements":measurements,"note":"end-to-end local measurements; BSGS coverage is not brute-force attempt throughput"}),
+                &json!({"requested_method":algorithm.method,"curve":curve,"openssl":openssl::version::version(),"sqlite":rusqlite::version(),"architecture":std::env::consts::ARCH,"logical_cpus":std::thread::available_parallelism().map_or(1,|n|n.get()),"checkpointing":"SQLite synchronous FULL; includes table construction for BSGS","chunk_size":16384,"measurements":measurements,"note":"end-to-end local measurements; BSGS coverage and kangaroo walk steps are not brute-force attempt throughput"}),
             )
         }
         Command::Report { job, output } => {

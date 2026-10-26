@@ -102,7 +102,7 @@ impl Store {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
         ensure!(
-            version <= 3,
+            version <= 4,
             "state database was created by a newer schema; refusing to modify it"
         );
         if write {
@@ -131,8 +131,11 @@ impl Store {
             if version < 3 {
                 conn.execute_batch("BEGIN IMMEDIATE;CREATE TABLE engine_states(job_id INTEGER PRIMARY KEY REFERENCES jobs(id),record TEXT NOT NULL);PRAGMA user_version=3;COMMIT;")?;
             }
+            if version < 4 {
+                conn.execute_batch("BEGIN IMMEDIATE;CREATE TABLE kangaroo_states(job_id INTEGER NOT NULL REFERENCES jobs(id),unit_id INTEGER PRIMARY KEY REFERENCES work_units(id),record TEXT NOT NULL,checksum TEXT NOT NULL);CREATE INDEX kangaroo_jobs ON kangaroo_states(job_id);PRAGMA user_version=4;COMMIT;")?;
+            }
         } else {
-            ensure!((1..=3).contains(&version), "uninitialized state database");
+            ensure!((1..=4).contains(&version), "uninitialized state database");
         }
         Ok(Self {
             conn,
@@ -390,7 +393,7 @@ impl Store {
                 let base = number(&spec.start)?;
                 let m = BigUint::from(c.baby_steps);
                 spans.push((&base + &a * &m, (&base + &b * &m).min(number(&spec.end)?)));
-            } else {
+            } else if spec.kangaroo.is_none() {
                 spans.push((a, b));
             }
         }
@@ -401,14 +404,206 @@ impl Store {
         let outcome = match status.as_str() {
             "recovered" => "verified_recovery",
             "exhausted" => "range_exhausted",
+            "budget_exhausted" => "probabilistic_budget_exhausted",
             "failed" => "engine_failure",
             "paused" => "interrupted",
             _ => "in_progress",
         };
         let bsgs = spec.bsgs.is_some();
-        Ok(
-            json!({"format_version":2,"job_id":id,"spec":spec,"status":status,"outcome":outcome,"covered_candidates":count.to_str_radix(10),"tested_candidates":if bsgs {None} else {Some(count.to_str_radix(10))},"giant_steps_completed":if bsgs {Some(work_count.to_str_radix(10))} else {None},"coverage":coverage,"engine_state":self.engine_state(id)?,"finding_id":finding,"created_at":created,"last_durable_update":updated,"completed_run_elapsed_ms":elapsed,"error":error,"coverage_note":if bsgs {"half-open scalar intervals algebraically covered by completed giant lookups, not brute-force candidate attempts"} else {"half-open intervals; uncommitted work may replay after a crash; no general security guarantee"},"status_note":"status is last persisted lifecycle; a forced termination can leave it running until resume","timing_note":"elapsed time includes finished invocations; a killed invocation may be undercounted","secret_storage":"private-file permissions; not encrypted at rest"}),
-        )
+        let mut result = json!({"format_version":2,"job_id":id,"spec":spec,"status":status,"outcome":outcome,"covered_candidates":count.to_str_radix(10),"tested_candidates":if bsgs {None} else {Some(count.to_str_radix(10))},"giant_steps_completed":if bsgs {Some(work_count.to_str_radix(10))} else {None},"coverage":coverage,"engine_state":self.engine_state(id)?,"finding_id":finding,"created_at":created,"last_durable_update":updated,"completed_run_elapsed_ms":elapsed,"error":error,"coverage_note":if bsgs {"half-open scalar intervals algebraically covered by completed giant lookups, not brute-force candidate attempts"} else {"half-open intervals; uncommitted work may replay after a crash; no general security guarantee"},"status_note":"status is last persisted lifecycle; a forced termination can leave it running until resume","timing_note":"elapsed time includes finished invocations; a killed invocation may be undercounted","secret_storage":"private-file permissions; not encrypted at rest"});
+        if spec.kangaroo.is_some() {
+            result["format_version"] = json!(3);
+            result["covered_candidates"] = Value::Null;
+            result["tested_candidates"] = Value::Null;
+            result["coverage"] = Value::Null;
+            let metrics = crate::kangaroo::report(self, id)?;
+            for (key, value) in metrics.as_object().context("invalid walk report")? {
+                result[key] = value.clone();
+            }
+        }
+        Ok(result)
+    }
+
+    pub fn initialize_kangaroo(
+        &mut self,
+        job: i64,
+        spec: &SearchSpec,
+        initial: &crate::kangaroo::Snapshot,
+    ) -> Result<()> {
+        let config = spec
+            .kangaroo
+            .as_ref()
+            .context("missing kangaroo configuration")?;
+        if let Some(manifest) = self.engine_state(job)? {
+            ensure!(
+                manifest == json!({"version":1,"engine":"ec-kangaroo","spec_hash":spec.hash()?}),
+                "kangaroo manifest binding mismatch"
+            );
+            let units: i64 = self.conn.query_row(
+                "SELECT COUNT(*) FROM work_units WHERE job_id=?1",
+                [job],
+                |r| r.get(0),
+            )?;
+            let states: i64 = self.conn.query_row(
+                "SELECT COUNT(*) FROM kangaroo_states WHERE job_id=?1",
+                [job],
+                |r| r.get(0),
+            )?;
+            ensure!(
+                units == i64::from(config.attempts) && states == units,
+                "missing kangaroo walk state; refusing reset"
+            );
+            return Ok(());
+        }
+        let tx = self.conn.transaction()?;
+        let units: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM work_units WHERE job_id=?1",
+            [job],
+            |r| r.get(0),
+        )?;
+        ensure!(
+            units == 0,
+            "missing kangaroo manifest with existing work; refusing reset"
+        );
+        for attempt in 0..config.attempts {
+            let mut state = initial.clone();
+            state.attempt = attempt;
+            state.validate(spec, attempt)?;
+            tx.execute("INSERT INTO work_units(job_id,start,end,next,status,generation) VALUES(?1,?2,?3,?2,'pending',0)",params![job,canonical(&attempt.into()),canonical(&(attempt+1).into())])?;
+            let unit = tx.last_insert_rowid();
+            let record = serde_json::to_string(&state)?;
+            tx.execute(
+                "INSERT INTO kangaroo_states(job_id,unit_id,record,checksum) VALUES(?1,?2,?3,?4)",
+                params![
+                    job,
+                    unit,
+                    record,
+                    crate::model::fingerprint(record.as_bytes())
+                ],
+            )?;
+        }
+        tx.execute(
+            "UPDATE jobs SET allocation=?2 WHERE id=?1",
+            params![job, canonical(&config.attempts.into())],
+        )?;
+        tx.execute(
+            "INSERT INTO engine_states(job_id,record) VALUES(?1,?2)",
+            params![
+                job,
+                json!({"version":1,"engine":"ec-kangaroo","spec_hash":spec.hash()?}).to_string()
+            ],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn kangaroo_state(
+        &self,
+        job: i64,
+        unit: &WorkUnit,
+        spec: &SearchSpec,
+    ) -> Result<Option<crate::kangaroo::Snapshot>> {
+        use num_traits::ToPrimitive;
+        let config = spec
+            .kangaroo
+            .as_ref()
+            .context("missing kangaroo configuration")?;
+        let max_bytes = u64::from(config.max_points) * 512 + 8192;
+        let (record,checksum):(String,String)=self.conn.query_row("SELECT record,checksum FROM kangaroo_states WHERE job_id=?1 AND unit_id=?2 AND length(record)<=?3",params![job,unit.id,max_bytes as i64],|r|Ok((r.get(0)?,r.get(1)?))).context("missing or oversized kangaroo checkpoint")?;
+        ensure!(
+            crate::model::fingerprint(record.as_bytes()) == checksum,
+            "kangaroo checkpoint checksum mismatch"
+        );
+        let state: crate::kangaroo::Snapshot = serde_json::from_str(&record)?;
+        let attempt = unit.start.to_u32().context("invalid logical attempt")?;
+        ensure!(
+            unit.end == &unit.start + 1u8,
+            "invalid kangaroo unit bounds"
+        );
+        state.validate(spec, attempt)?;
+        ensure!(
+            (state.phase == "done") == (unit.next == unit.end),
+            "kangaroo walk state and work cursor disagree"
+        );
+        Ok(Some(state))
+    }
+
+    pub fn save_kangaroo_state(
+        &mut self,
+        job: i64,
+        unit: &WorkUnit,
+        spec: &SearchSpec,
+        state: &crate::kangaroo::Snapshot,
+        finished: bool,
+    ) -> Result<()> {
+        use num_traits::ToPrimitive;
+        state.validate(spec, unit.start.to_u32().context("invalid attempt")?)?;
+        let old = self
+            .kangaroo_state(job, unit, spec)?
+            .context("missing old walk")?;
+        ensure!(
+            old.tame_steps <= state.tame_steps
+                && old.wild_steps <= state.wild_steps
+                && number(&old.tame_distance)? <= number(&state.tame_distance)?
+                && number(&old.wild_distance)? <= number(&state.wild_distance)?,
+            "regressing kangaroo checkpoint"
+        );
+        ensure!(
+            old.points
+                .iter()
+                .all(|(p, d)| state.points.get(p) == Some(d)),
+            "kangaroo checkpoint lost committed points"
+        );
+        let rank = |p: &str| match p {
+            "tame" => 0,
+            "wild" => 1,
+            _ => 2,
+        };
+        ensure!(
+            rank(&old.phase) <= rank(&state.phase),
+            "regressing kangaroo phase"
+        );
+        let record = serde_json::to_string(state)?;
+        let checksum = crate::model::fingerprint(record.as_bytes());
+        let tx = self.conn.transaction()?;
+        let (generation, status): (i64, String) = tx.query_row(
+            "SELECT generation,status FROM work_units WHERE id=?1 AND job_id=?2",
+            params![unit.id, job],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        ensure!(
+            generation == unit.generation && status == "running",
+            "stale kangaroo checkpoint"
+        );
+        let done = state.phase == "done";
+        ensure!(
+            !done || finished,
+            "completed walk must finish its work unit"
+        );
+        tx.execute(
+            "UPDATE kangaroo_states SET record=?2,checksum=?3 WHERE unit_id=?1",
+            params![unit.id, record, checksum],
+        )?;
+        tx.execute(
+            "UPDATE work_units SET next=?2,status=?3 WHERE id=?1",
+            params![
+                unit.id,
+                canonical(if done { &unit.end } else { &unit.start }),
+                if done {
+                    "done"
+                } else if finished {
+                    "pending"
+                } else {
+                    "running"
+                }
+            ],
+        )?;
+        tx.execute(
+            "UPDATE jobs SET updated_at=?2 WHERE id=?1",
+            params![job, now()],
+        )?;
+        tx.commit()?;
+        Ok(())
     }
 
     pub fn engine_state(&self, job: i64) -> Result<Option<Value>> {

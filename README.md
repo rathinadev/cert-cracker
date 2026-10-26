@@ -2,7 +2,7 @@
 
 A local Rust CLI for public-key inspection and bounded weak-key recovery, with native OpenSSL mathematics, multicore ECC workers, and durable SQLite checkpoints.
 
-Version **0.2.0** adds a planner and durable, memory-bounded BSGS to the CPU foundation in [PLAN.md](PLAN.md). It is a development preview, not the complete roadmap or a claim that modern cryptography can generally be cracked.
+Version **0.3.0** adds experimental, resumable interval kangaroo to the sequential/BSGS CPU engines in [PLAN.md](PLAN.md). It is a development preview, not the complete roadmap or a claim that modern cryptography can generally be cracked.
 
 ## Implemented
 
@@ -16,6 +16,7 @@ Version **0.2.0** adds a planner and durable, memory-bounded BSGS to the CPU fou
 - Test coverage includes P-256, P-384, P-521 and secp256k1, and bounds above 64 bits.
 - Save exact per-work-unit next-candidate cursors in SQLite transactions; resume after Ctrl+C, time limits, restart or forced termination.
 - Resume with a different worker count. Out-of-order completed chunks retain their exact coverage.
+- Run independent bounded kangaroo attempts across CPU workers, with saved walk positions, distances, seeds, operation counts and distinguished points. Probabilistic attempts never claim exhaustive coverage.
 - Independently recompute a matched EC public key before persisting a verified finding.
 - Run bounded RSA shared-prime, Wiener, trial-division and Fermat checks. Reconstruct and verify supported semiprime private keys, including a signature round trip.
 - Persist RSA audit history, including completed negative checks and their budgets.
@@ -117,6 +118,26 @@ The planner uses an operation-cost heuristic, not a calibrated time forecast. BS
 
 The baby table is built once by the coordinator; giant-step workers share the immutable ready table without cloning it. Building a table is currently sequential. Table reuse applies to the same job, not to unrelated targets or plans. [BSGS.md](docs/BSGS.md) documents the artifact and coverage contracts.
 
+## Experimental interval kangaroo
+
+```sh
+./dist/cert-cracker lab --curve P-384 --scalar 98765432 --out ./lab-kangaroo
+./dist/cert-cracker estimate --input ./lab-kangaroo/certificate.pem \
+  --end 100000001 --method kangaroo --memory-mib 32 --workers 4
+./dist/cert-cracker --state ./state-kangaroo search \
+  --input ./lab-kangaroo/certificate.pem --end 100000001 \
+  --method kangaroo --memory-mib 32 --workers 4 --kangaroo-attempts 8
+./dist/cert-cracker --state ./state-kangaroo resume 1 --workers 2
+```
+
+`auto` continues to select sequential or BSGS. Kangaroo requires an explicit `--method kangaroo`. Its fixed logical attempts (default 16) run independently; this is a CPU reference engine, not a cooperative or GPU herd. It supports the same four tested curves as BSGS, including large scalar offsets.
+
+Each attempt builds a bounded tame distinguished-point map, then follows a wild walk looking for a collision. `--kangaroo-steps` limits point additions per phase; the default is `8*ceil(sqrt(interval_width))`, capped at `u64::MAX/4`. `--kangaroo-dp-bits` sets the predicate rarity; `--kangaroo-max-points` caps the saved tame map. When the map fills, the attempt switches to wild searching with the committed points and reports saturation. These settings affect the chance of finding a key; budget exhaustion does not prove the interval empty.
+
+Checkpoints atomically save the entire map and walk state in SQLite with a specification binding, checksum and work generation. Resume preserves the same seed, partition, phase, counters and next point while allowing a different worker count within the saved memory budget. The default seed is 32 zero bytes for reproducibility; use `--kangaroo-seed` with 64 lowercase hex characters to create a different immutable search. Increasing attempt/step budgets or changing the seed creates a new job.
+
+The memory budget reserves active maps and checkpoint copies; native/runtime baseline RSS and SQLite cache are additional. Checkpoints serialize each active map, so a large map or very short interval can make checkpoint I/O expensive. See [KANGAROO.md](docs/KANGAROO.md) for the mathematics, storage contract and limits.
+
 ## RSA analysis
 
 ```sh
@@ -135,12 +156,15 @@ RSA audits are finite checks that rerun if interrupted. Durable long-search resu
 ./dist/cert-cracker report JOB_ID --output ./report.json
 ./dist/cert-cracker bench --curve P-256 --candidates 100000 --workers 1,2,4 --method sequential
 ./dist/cert-cracker bench --curve P-256 --candidates 100000 --workers 1,2,4 --method bsgs
+./dist/cert-cracker bench --curve P-256 --candidates 100000 --workers 1,2,4 --method kangaroo --kangaroo-attempts 4
 ./dist/cert-cracker capabilities
 ```
 
 JSON goes to stdout; progress and errors go to stderr. Errors exit with status 2. Report bounds and coverage are exact strings, and completed coverage is merged without filling gaps. Timing currently sums completed invocations; a killed invocation may be undercounted. The built-in benchmark reports single local measurements with metadata, not statistically rigorous cross-machine claims.
 
 Report format version 2 adds `covered_candidates`. For BSGS, `tested_candidates` is null and `giant_steps_completed` records actual completed lookups. Algebraic coverage must not be advertised as brute-force attempt throughput. Sequential reports retain their original `tested_candidates` field.
+
+Kangaroo reports use format 3: `coverage`, `covered_candidates` and `tested_candidates` are null. `walk_steps_completed` counts durable point additions, and `attempts_completed` counts completed attempts. `probabilistic_budget_exhausted` means the chosen walk budget ended without recovery; a key may still be inside the interval. No exhaustive completion percentage or numeric success probability is claimed.
 
 `range_exhausted` means that the configured interval was tested without recovery. `no_weakness_detected_by_completed_checks` applies only to the recorded checks and budgets. Neither is a general security certificate.
 
@@ -150,7 +174,7 @@ Each state directory contains `state.sqlite`, SQLite journal sidecars when activ
 
 BSGS also requires the referenced files in `artifacts/`. Preserve them with the database when backing up or moving a stopped state directory. New artifact generations are synced before their manifests are committed; an uncommitted build tail can replay after a crash. A missing or corrupt committed table is an error and never silently resets existing search coverage.
 
-The writer upgrades schemas 1/2 to schema 3 transactionally. Version 0.1 executables cannot open an upgraded database. Keep a quiescent backup before using the new version with important existing state. Old sequential specifications retain the same hashes and continue without restarting their completed ranges.
+The writer upgrades schemas 1/2/3 to schema 4 transactionally. Earlier executables cannot open an upgraded database. Keep a quiescent backup before using the new version with important existing state. Existing sequential and BSGS specifications retain their hashes; migration preserves their completed work and artifacts. Kangaroo maps and walk positions are stored together inside the database.
 
 The database includes recovered private material and uses private Unix file permissions. **It is not encrypted at rest.** Normal reports and diagnostic output omit private keys. Development preview secret storage, Windows ACL behavior, encrypted key wrapping and a complete backup CLI need further hardening before general distribution.
 
@@ -166,10 +190,10 @@ cargo test --locked
 
 Tests cover weak-key recovery on four curves, large P-521 bounds, duplicate target normalization, stale/regressing cursors, exact gap-aware coverage, paused final chunks, corrupt specification hashes, private-file exports, RSA recovery, and an actual child process terminated with SIGKILL and resumed with a different worker count.
 
-The expanded suite has **28 tests**, including BSGS/sequential differential cases, infinity and subgroup boundaries, partial final blocks, resource limits, table corruption, torn tails, cancellation during validation, legacy-state migration, and actual SIGKILL recovery during table building and giant-step searching.
+The expanded suite has **40 tests**, including differential results on four curves, infinity and subgroup boundaries, bounded probabilistic failures, table saturation, resource limits, checkpoint corruption, torn tails, cancellation, schema migrations, and actual SIGKILL recovery during BSGS building/searching and kangaroo tame/wild walks. An outside-range kangaroo test also checks that changing worker count after a pause produces exactly the same final logical walk states.
 
 ## Not yet implemented
 
-Pollard kangaroo, GPU kernels, signature nonce analysis, EdDSA seed recovery, batch-GCD trees, ECM/NFS adapters, a dashboard, distributed workers, encrypted secret storage, and full certificate-chain trust validation are not included. Inspection support for a key family does not imply a recovery engine for it. Use `capabilities` for the current executable's declared scope.
+Cooperative kangaroo herds and external adapters, GPU kernels, signature nonce analysis, EdDSA seed recovery, batch-GCD trees, ECM/NFS adapters, a dashboard, distributed workers, encrypted secret storage, and full certificate-chain trust validation are not included. Inspection support for a key family does not imply a recovery engine for it. Use `capabilities` for the current executable's declared scope.
 
 The full roadmap and milestone acceptance criteria remain in [PLAN.md](PLAN.md).

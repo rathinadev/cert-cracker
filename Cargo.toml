@@ -1,6 +1,6 @@
 [package]
 name = "cert-cracker"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "Local public-key analysis with durable multicore bounded recovery"
 license = "MIT"

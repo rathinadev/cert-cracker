@@ -131,6 +131,7 @@ fn table_sizes_one_and_whole_interval_and_large_scalar() {
 fn planner_memory_constraints_and_automatic_selection() {
     let t = target("P-256", 4u8.into());
     let mut options = PlanOptions {
+        kangaroo: None,
         start: "1",
         end: "1000000000001",
         chunk_size: 64,
@@ -272,10 +273,13 @@ fn legacy_sequential_hash_and_v2_database_migrate() {
         let spec = SearchSpec::sequential(id, "1", "32", 8).unwrap();
         old = serde_json::to_string(&spec).unwrap();
         assert!(!old.contains("bsgs"));
+        assert!(!old.contains("kangaroo"));
         job = store.create_job(&spec).unwrap();
         store
             .conn
-            .execute_batch("DROP TABLE engine_states; PRAGMA user_version=2;")
+            .execute_batch(
+                "DROP TABLE kangaroo_states; DROP TABLE engine_states; PRAGMA user_version=2;",
+            )
             .unwrap();
     }
     let mut store = Store::open(dir.path(), true).unwrap();
