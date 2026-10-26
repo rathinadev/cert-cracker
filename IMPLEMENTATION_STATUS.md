@@ -85,7 +85,7 @@ Machine: macOS ARM64, 10 logical CPUs. OpenSSL 3.6.4; SQLite 3.54.1; optimized R
 - Unknown-algorithm metadata preservation beyond what the linked OpenSSL backend can parse.
 - Cross-plan coverage reuse, shared multi-target EC scans and a richer job queue.
 
-CI definitions for Linux, macOS and Windows are provided. The published workflow has been queued on GitHub; successful remote platform validation is not yet claimed.
+CI definitions for Linux, macOS and Windows are provided. GitHub's initial version-0.2 run passed on Linux and macOS. Windows exposed a platform-specific strict-lint failure in directory creation; it and Unix-only test imports have been corrected. Version-0.3 remote results are pending; successful Windows validation is not yet claimed.
 
 ## Current operational limits
 

@@ -8,6 +8,7 @@
 - Report probabilistic budget exhaustion separately from exhaustive interval coverage. Kangaroo report format 3 uses null coverage fields and durable walk-step counts.
 - Migrate state schema 1/2/3 to schema 4 while preserving earlier sequential/BSGS hashes and artifacts.
 - Expand local validation to 40 tests, including forced process termination in both walk phases and exact resumed-state comparisons.
+- Correct Windows strict-lint portability for artifact-directory creation and Unix-only test imports.
 
 ## 0.2.0 — 26 October 2026
 

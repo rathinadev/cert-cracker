@@ -9,10 +9,12 @@ use serde_json::Value;
 use std::{
     fs,
     path::Path,
-    process::{Command, Stdio},
+    process::Command,
     sync::{Arc, atomic::AtomicBool},
-    time::{Duration, Instant},
+    time::Duration,
 };
+#[cfg(unix)]
+use std::{process::Stdio, time::Instant};
 
 fn fixture(dir: &Path, curve: &str, scalar: &BigUint) -> std::path::PathBuf {
     let (cert, public) = crypto::lab_certificate(curve, scalar).unwrap();

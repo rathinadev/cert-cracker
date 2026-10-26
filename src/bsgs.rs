@@ -128,13 +128,13 @@ fn artifact_dir(store: &Store) -> Result<PathBuf> {
     let dir = parent.join("artifacts");
     no_symlink(&dir)?;
     if !dir.exists() {
-        let mut builder = fs::DirBuilder::new();
         #[cfg(unix)]
         {
             use std::os::unix::fs::DirBuilderExt;
-            builder.mode(0o700);
+            fs::DirBuilder::new().mode(0o700).create(&dir)?;
         }
-        builder.create(&dir)?;
+        #[cfg(not(unix))]
+        fs::create_dir(&dir)?;
         sync_directory(parent)?;
     }
     ensure!(dir.is_dir(), "artifact path must be a directory");

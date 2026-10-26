@@ -13,11 +13,12 @@ use serde_json::{Value, json};
 use std::{
     fs::{self, OpenOptions},
     io::{Seek, SeekFrom, Write},
-    path::Path,
-    process::{Command, Stdio},
+    process::Command,
     sync::{Arc, atomic::AtomicBool},
-    time::{Duration, Instant},
+    time::Duration,
 };
+#[cfg(unix)]
+use std::{path::Path, process::Stdio, time::Instant};
 
 fn target(curve: &str, scalar: BigUint) -> cert_cracker::model::Target {
     let private = crypto::lab_key(curve, &scalar).unwrap();

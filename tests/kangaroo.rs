@@ -10,10 +10,12 @@ use openssl::pkey::PKey;
 use serde_json::{Value, json};
 use std::{
     fs,
-    process::{Command, Stdio},
+    process::Command,
     sync::{Arc, atomic::AtomicBool},
-    time::{Duration, Instant},
+    time::Duration,
 };
+#[cfg(unix)]
+use std::{process::Stdio, time::Instant};
 
 fn target(curve: &str, scalar: BigUint) -> Target {
     let private = crypto::lab_key(curve, &scalar).unwrap();
