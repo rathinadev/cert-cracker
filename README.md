@@ -2,7 +2,7 @@
 
 A local Rust CLI for public-key inspection and bounded weak-key recovery, with native OpenSSL mathematics, multicore ECC workers, and durable SQLite checkpoints.
 
-Version **0.8.0** adds an opt-in Pollard p-1 RSA check and an ECDSA repeated-nonce audit and incremental durable kangaroo point storage alongside optional locally calibrated estimates and experimental cooperative kangaroo to the sequential, BSGS and independent kangaroo CPU engines in [PLAN.md](PLAN.md). It is a development preview, not the complete roadmap or a claim that modern cryptography can generally be cracked.
+Version **0.9.0** adds a local backup command and an opt-in Pollard p-1 RSA check and an ECDSA repeated-nonce audit and incremental durable kangaroo point storage alongside optional locally calibrated estimates and experimental cooperative kangaroo to the sequential, BSGS and independent kangaroo CPU engines in [PLAN.md](PLAN.md). It is a development preview, not the complete roadmap or a claim that modern cryptography can generally be cracked.
 
 ## Implemented
 
@@ -21,6 +21,7 @@ Version **0.8.0** adds an opt-in Pollard p-1 RSA check and an ECDSA repeated-non
 - Independently recompute a matched EC public key before persisting a verified finding.
 - Run bounded RSA shared-prime, Wiener, trial-division, Fermat and opt-in Pollard p-1 checks. Reconstruct and verify supported semiprime private keys, including a signature round trip.
 - Persist RSA audit history, including completed negative checks and their budgets.
+- Back up a stopped state and its BSGS artifacts to a new directory, checking database integrity and referenced artifact checksums.
 - Verify supplied ECDSA signatures and check distinct signed digests for repeated nonce recovery.
 - Export reports without private material. Export recovered private keys only through a separate explicit command to a new file.
 - Benchmark the actual scheduler with SQLite checkpointing enabled.
@@ -199,6 +200,17 @@ Supply the signer's public key or certificate and a JSON file with exact digest 
 
 Each signature must verify against that signer and digest before the audit runs. The digest must be the actual digest used during signing; the tool cannot establish which message produced it. It handles opposite-sign `s` encodings, ignores exact duplicate evidence, and independently verifies a candidate private key before storing a finding. Recovered keys are stored in the private state database and are not encrypted at rest. Input is limited to 1,024 signatures and 4 MiB; at most 4,096 eligible signature pairs are checked, with a distinct incomplete outcome if that limit is reached. A negative result does not prove nonce security.
 
+## Backup and restore
+
+Stop running coordinators, then create a backup in a **new** directory on local storage:
+
+```sh
+./dist/cert-cracker --state ./state backup --output ./state-backup
+./dist/cert-cracker --state ./state-backup jobs list
+```
+
+The command locks the source against other coordinators, uses SQLite's backup API, checks database integrity, copies artifact files, and verifies committed checksums for referenced BSGS artifacts. `BACKUP_COMPLETE.json` is published atomically after those checks and records file hashes. An error or interruption may leave a partial directory without that marker; remove or inspect that partial directory before retrying. The backup contains private keys and is **not encrypted**. Protect it accordingly. Opening the completed backup as a state directory can modify it; make an additional copy first if you need to preserve the backup as an archive.
+
 ## Storage and privacy
 
 Each state directory contains `state.sqlite`, SQLite journal sidecars when active, and an advisory coordinator lock file. Use local storage, not a network-shared live WAL database. Keep journal sidecars with the active database; use a supported SQLite backup process rather than copying only the main file during a run.
@@ -207,7 +219,7 @@ BSGS also requires the referenced files in `artifacts/`. Preserve them with the 
 
 The writer upgrades schemas 1–4 to schema 5 transactionally. Earlier executables cannot open an upgraded database. Keep a quiescent backup before using the new version with important existing state. Existing specifications retain their hashes; migration preserves completed work and artifacts. Existing kangaroo snapshots convert to incremental point rows on their next successful checkpoint, in the same transaction as the walk position.
 
-The database includes recovered private material and uses private Unix file permissions. **It is not encrypted at rest.** Normal reports and diagnostic output omit private keys. Development preview secret storage, Windows ACL behavior, encrypted key wrapping and a complete backup CLI need further hardening before general distribution.
+The database includes recovered private material and uses private Unix file permissions. **It is not encrypted at rest.** Normal reports and diagnostic output omit private keys. Development preview secret storage, Windows ACL behavior and encrypted key wrapping need further hardening before general distribution.
 
 The application operates on local inputs. It does not upload keys, install certificates, change browser trust, or invoke third-party recovery services.
 

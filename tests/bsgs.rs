@@ -76,6 +76,64 @@ fn artifact(store: &Store, job: i64) -> (Manifest, std::path::PathBuf) {
 }
 
 #[test]
+fn backup_copies_committed_table_and_resumes_without_modifying_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = dir.path().join("source");
+    let output = dir.path().join("backup");
+    let job;
+    let manifest;
+    {
+        let mut store = Store::open(&state, true).unwrap();
+        let id = store.import(target("P-256", 77u8.into())).unwrap();
+        job = make(&store, id, "1", "1000", 32);
+        prepare(&mut store, job, false).unwrap();
+        manifest = store.engine_state(job).unwrap();
+        assert!(cert_cracker::backup::create(&state, &output).is_err());
+        assert!(!output.exists());
+    }
+    let result = Command::new(env!("CARGO_BIN_EXE_cert-cracker"))
+        .arg("--state")
+        .arg(&state)
+        .arg("backup")
+        .arg("--output")
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(output.join("BACKUP_COMPLETE.json").is_file());
+    assert!(cert_cracker::backup::create(&state, &output).is_err());
+    assert!(cert_cracker::backup::create(&state, &state.join("nested")).is_err());
+    let mut restored = Store::open(&output, true).unwrap();
+    assert_eq!(restored.engine_state(job).unwrap(), manifest);
+    assert_eq!(
+        search::run(&mut restored, job, opts(2)).unwrap()["status"],
+        "recovered"
+    );
+    let source = Store::open(&state, false).unwrap();
+    assert_ne!(source.report(job).unwrap()["status"], "recovered");
+}
+
+#[test]
+fn backup_rejects_missing_referenced_artifact_without_completion_marker() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = dir.path().join("source");
+    let output = dir.path().join("backup");
+    {
+        let mut store = Store::open(&state, true).unwrap();
+        let id = store.import(target("P-256", 77u8.into())).unwrap();
+        let job = make(&store, id, "1", "1000", 32);
+        prepare(&mut store, job, false).unwrap();
+        fs::remove_file(artifact(&store, job).1).unwrap();
+    }
+    assert!(cert_cracker::backup::create(&state, &output).is_err());
+    assert!(!output.join("BACKUP_COMPLETE.json").exists());
+}
+
+#[test]
 fn differential_four_curves_nonsquare_interval_and_infinity() {
     for curve in ["P-256", "P-384", "P-521", "secp256k1"] {
         for scalar in [4u32, 5, 6, 15, 16, 115, 118, 119, 120] {

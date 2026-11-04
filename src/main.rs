@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, ensure};
 use cert_cracker::{
-    analysis, calibration, crypto, import,
+    analysis, backup, calibration, crypto, import,
     model::{Target, number},
     planner::{self, KangarooOptions, PlanOptions},
     search::{self, RunOptions},
@@ -100,6 +100,11 @@ enum Command {
     Findings,
     /// List persisted bounded-audit results, including negative check coverage.
     Audits,
+    /// Back up a stopped state directory and its artifacts into a NEW directory.
+    Backup {
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Benchmark the actual CPU scheduler with SQLite checkpointing enabled.
     Bench {
         #[arg(long, default_value = "P-256")]
@@ -599,6 +604,10 @@ fn main_result() -> Result<()> {
         }
         Command::Findings => emit(&Store::open(&cli.state, false)?.findings()?),
         Command::Audits => emit(&Store::open(&cli.state, false)?.audits()?),
+        Command::Backup { output } => {
+            let report = backup::create(&cli.state, &output)?;
+            emit(&json!({"destination":output,"backup":report}))
+        }
         Command::Bench {
             curve,
             candidates,

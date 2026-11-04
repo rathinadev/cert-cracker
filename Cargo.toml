@@ -1,6 +1,6 @@
 [package]
 name = "cert-cracker"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2024"
 description = "Local public-key analysis with durable multicore bounded recovery"
 license = "MIT"
@@ -18,7 +18,7 @@ num-traits = "0.2"
 openssl = "0.10"
 pem = "3"
 rayon = "1"
-rusqlite = { version = "0.41", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled", "backup"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

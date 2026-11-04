@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.0 — 4 November 2026
+
+- Add stopped-state backup using SQLite backup, private artifact copies, BSGS manifest checksum validation, and an atomic completion marker.
+
 ## 0.8.0 — 4 November 2026
 
 - Add an opt-in, bounded single-base Pollard p-1 stage-1 RSA check, independently verifying reconstructed keys and reporting its explicit bound.

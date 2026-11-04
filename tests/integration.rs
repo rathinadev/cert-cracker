@@ -400,7 +400,21 @@ fn persisted_negative_audit_and_database_schema_migration() {
             )
             .unwrap();
     }
-    let store = Store::open(&state, true).unwrap();
+    // Concurrent child spawning may briefly inherit a descriptor before exec
+    // closes it. Only retry the specific lock error, and bound the wait.
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    let store = loop {
+        match Store::open(&state, true) {
+            Ok(store) => break store,
+            Err(error)
+                if error.to_string().contains("another coordinator")
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(5))
+            }
+            Err(error) => panic!("could not reopen migrated state: {error:#}"),
+        }
+    };
     let record =
         serde_json::json!({"outcome":"no_weakness_detected_by_completed_checks","budget":100});
     store.save_audit(&record).unwrap();
