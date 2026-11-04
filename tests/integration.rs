@@ -440,6 +440,55 @@ fn tiny_rsa_trial_and_fermat_have_verified_private_keys() {
 }
 
 #[test]
+fn cli_pollard_p_minus_one_persists_a_verified_finding() {
+    use openssl::{bn::BigNum, pkey::PKey, rsa::Rsa};
+    let dir = tempfile::tempdir().unwrap();
+    let key = PKey::from_rsa(
+        Rsa::from_public_components(
+            BigNum::from_u32(1009 * 1019).unwrap(),
+            BigNum::from_u32(65537).unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let target = import::target_from_key(&key, "test").unwrap();
+    let input = dir.path().join("public.pem");
+    std::fs::write(&input, key.public_key_to_pem().unwrap()).unwrap();
+    let state = dir.path().join("state");
+    let result = Command::new(env!("CARGO_BIN_EXE_cert-cracker"))
+        .arg("--state")
+        .arg(&state)
+        .args([
+            "audit",
+            "--trial-limit",
+            "0",
+            "--fermat-steps",
+            "0",
+            "--p-minus-one-bound",
+            "16",
+        ])
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["budgets"]["p_minus_one_bound"], 16);
+    assert_eq!(report["results"][0]["method"], "pollard_p_minus_one_stage1");
+    let finding = report["results"][0]["finding_id"].as_i64().unwrap();
+    let keyfile = dir.path().join("recovered.pem");
+    Store::open(&state, false)
+        .unwrap()
+        .export_key(finding, &keyfile)
+        .unwrap();
+    crypto::verify_private(&target, &std::fs::read(keyfile).unwrap()).unwrap();
+    assert!(!String::from_utf8_lossy(&result.stdout).contains("PRIVATE KEY"));
+}
+
+#[test]
 fn cli_keeps_successful_imports_when_other_paths_are_missing() {
     let dir = tempfile::tempdir().unwrap();
     let path = fixture(dir.path(), "P-256", &4u8.into());

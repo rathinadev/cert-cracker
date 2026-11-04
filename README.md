@@ -2,7 +2,7 @@
 
 A local Rust CLI for public-key inspection and bounded weak-key recovery, with native OpenSSL mathematics, multicore ECC workers, and durable SQLite checkpoints.
 
-Version **0.7.0** adds an ECDSA repeated-nonce audit and incremental durable kangaroo point storage alongside optional locally calibrated estimates and experimental cooperative kangaroo to the sequential, BSGS and independent kangaroo CPU engines in [PLAN.md](PLAN.md). It is a development preview, not the complete roadmap or a claim that modern cryptography can generally be cracked.
+Version **0.8.0** adds an opt-in Pollard p-1 RSA check and an ECDSA repeated-nonce audit and incremental durable kangaroo point storage alongside optional locally calibrated estimates and experimental cooperative kangaroo to the sequential, BSGS and independent kangaroo CPU engines in [PLAN.md](PLAN.md). It is a development preview, not the complete roadmap or a claim that modern cryptography can generally be cracked.
 
 ## Implemented
 
@@ -19,7 +19,7 @@ Version **0.7.0** adds an ECDSA repeated-nonce audit and incremental durable kan
 - Run independent bounded kangaroo attempts across CPU workers, with saved walk positions, distances, seeds, operation counts and distinguished points. Probabilistic attempts never claim exhaustive coverage.
 - Optionally share distinguished tame/wild points between kangaroo attempts, with versioned checkpoints and bounded shared-index memory.
 - Independently recompute a matched EC public key before persisting a verified finding.
-- Run bounded RSA shared-prime, Wiener, trial-division and Fermat checks. Reconstruct and verify supported semiprime private keys, including a signature round trip.
+- Run bounded RSA shared-prime, Wiener, trial-division, Fermat and opt-in Pollard p-1 checks. Reconstruct and verify supported semiprime private keys, including a signature round trip.
 - Persist RSA audit history, including completed negative checks and their budgets.
 - Verify supplied ECDSA signatures and check distinct signed digests for repeated nonce recovery.
 - Export reports without private material. Export recovered private keys only through a separate explicit command to a new file.
@@ -162,6 +162,8 @@ The memory budget reserves active maps, checkpoint copies and, in cooperative mo
 ```
 
 With no file arguments, `audit` uses imported targets. Shared-prime analysis is a bounded reference pairwise implementation, limited to 4096 unique targets. Trial and Fermat budgets are each capped at one million. Identical moduli are not incorrectly treated as recovered factors. Full-modulus GCD and unsupported reconstruction cases remain explicit.
+
+Enable the single-base stage-1 Pollard p-1 check explicitly with `--p-minus-one-bound 10000` (allowed range 2–100000; at most 256 targets). It is disabled by default. It can find some factors with suitably smooth factor-minus-one orders; it does not implement stage 2, and a full-modulus GCD or negative result is inconclusive.
 
 RSA audits are finite checks that rerun if interrupted. Durable long-search resume currently applies to the EC engines. RSA-PSS parameter restrictions are inspected, but RSA-PSS private-key reconstruction is not enabled by this audit engine. Multi-prime reconstruction and advanced factorization engines remain future work.
 

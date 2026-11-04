@@ -1,6 +1,6 @@
 # Implementation status — 4 November 2026
 
-Version: **0.7.0 CPU development preview**.
+Version: **0.8.0 CPU development preview**.
 
 The CPU foundation from M1–M3, BSGS and experimental independent and cooperative native kangaroo modes are working. The complete PLAN.md roadmap remains in progress. Compatible external adapters remain additional M4 work.
 
@@ -22,7 +22,7 @@ The CPU foundation from M1–M3, BSGS and experimental independent and cooperati
 - SQLite 3.54.1 with synchronous FULL transactions, schema migration, coordinator locking and per-work-unit generation/cursor validation.
 - Crash recovery, changed worker count on resume, exact gap-aware coverage and duplicate-plan reuse.
 - Independent EC candidate recomputation before durable discovery storage.
-- Bounded RSA shared-prime, Wiener, trial and Fermat checks, private reconstruction and modular/signature verification as applicable.
+- Bounded RSA shared-prime, Wiener, trial, Fermat and opt-in single-base Pollard p-1 stage-1 checks, private reconstruction and modular/signature verification as applicable.
 - Persisted audit history, public reports, verified private-key export to a new file.
 - Bounded ECDSA repeated-nonce audit over signatures verified against one signer and supplied digests, with independent recovered-key verification.
 - Laboratory fixture generation, runtime capability reporting and an end-to-end benchmark command.
@@ -33,7 +33,7 @@ The CPU foundation from M1–M3, BSGS and experimental independent and cooperati
 
 - `cargo fmt --all -- --check`: passed.
 - `cargo clippy --all-targets --locked -- -D warnings`: passed.
-- `cargo test --locked`: **52 tests passed** (7 unit tests, 45 integration tests).
+- `cargo test --locked`: **54 tests passed** (8 unit tests, 46 integration tests).
 - Actual SIGKILL of a child search followed by resume with a different worker count: passed; final coverage was exactly the configured range.
 - Actual SIGKILL during BSGS table construction and giant searching: passed, including changed worker counts and ready-table reuse.
 - Differential sequential/BSGS results on four curves, infinity entries, partial final blocks, subgroup-boundary exclusions and large offsets: passed.

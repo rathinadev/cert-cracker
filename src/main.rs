@@ -85,6 +85,9 @@ enum Command {
         trial_limit: u64,
         #[arg(long, default_value_t = 1000)]
         fermat_steps: u64,
+        /// Enable stage-1 Pollard p-1 with this bound (2..100000); zero disables it.
+        #[arg(long, default_value_t = 0)]
+        p_minus_one_bound: u32,
     },
     /// Verify ECDSA signatures and check for repeated nonces on distinct digests.
     AuditSignatures {
@@ -381,7 +384,7 @@ fn main_result() -> Result<()> {
             {"id":"ec-bsgs","status":"implemented","hardware":"multicore CPU with one shared immutable table","curves":["P-256","P-384","P-521","secp256k1"],"checkpoint":"durable baby-step ledger, checksummed ready table, exact giant-step cursors","memory_limit":"table/workspace budget; runtime baseline RSS excluded"},
             {"id":"ec-kangaroo","status":"experimental","hardware":"multicore CPU; independent or cooperative logical attempts","curves":["P-256","P-384","P-521","secp256k1"],"checkpoint":"atomic checksummed walk positions, distances, steps and distinguished-point maps; worker count can change","coverage":"probabilistic budgets only; no exhaustive scalar coverage","memory_limit":"active maps, shared collision index and checkpoint workspace; runtime/native baseline RSS and SQLite cache excluded"},
             {"id":"ecdsa-signature-audit","status":"implemented","methods":["verified repeated nonce for one signer"],"limits":{"signatures":1024,"candidate_pairs":4096},"checkpoint":"bounded audit reruns"},
-            {"id":"rsa-audit","status":"implemented","methods":["pairwise shared-prime GCD","Wiener","bounded trial division","bounded Fermat"],"limits":{"targets":4096,"max_trial_limit":1000000,"max_fermat_iterations":1000000},"checkpoint":"short bounded audit reruns; no resumable factorization engine"}],
+            {"id":"rsa-audit","status":"implemented","methods":["pairwise shared-prime GCD","Wiener","bounded trial division","bounded Fermat","opt-in Pollard p-1 stage 1"],"limits":{"targets":4096,"max_trial_limit":1000000,"max_fermat_iterations":1000000,"max_p_minus_one_bound":100000,"max_p_minus_one_targets":256},"checkpoint":"short bounded audit reruns; no resumable factorization engine"}],
             "inspection":["EC","RSA","RSA-PSS","DSA","Ed25519","Ed448","DH","X25519","X448","other backend-supported public keys"],
             "not_implemented":["external kangaroo adapter","GPU kernels","EdDSA seed recovery","ECM/NFS adapters","distributed workers","dashboard","encrypted secret vault","certificate chain trust validation"],
             "secret_storage":"private state files; not encrypted"})),
@@ -535,6 +538,7 @@ fn main_result() -> Result<()> {
             files,
             trial_limit,
             fermat_steps,
+            p_minus_one_bound,
         } => {
             let mut store = Store::open(&cli.state, true)?;
             let targets = if files.is_empty() {
@@ -552,7 +556,12 @@ fn main_result() -> Result<()> {
                 targets
             };
             ensure!(!targets.is_empty(), "no targets to audit");
-            let mut findings = analysis::analyze(&targets, trial_limit, fermat_steps)?;
+            let mut findings = analysis::analyze_with_p_minus_one(
+                &targets,
+                trial_limit,
+                fermat_steps,
+                p_minus_one_bound,
+            )?;
             for analysis in &mut findings {
                 if let Some(pem) = analysis.private_pem.take() {
                     let target = targets.iter().find(|t| t.id == analysis.target_id).unwrap();
@@ -564,7 +573,7 @@ fn main_result() -> Result<()> {
                     )?);
                 }
             }
-            let mut report = json!({"format_version":1,"results":findings,"budgets":{"trial_limit":trial_limit,"fermat_steps":fermat_steps},"note":"RSA checks are bounded; negative results do not establish security"});
+            let mut report = json!({"format_version":1,"results":findings,"budgets":{"trial_limit":trial_limit,"fermat_steps":fermat_steps,"p_minus_one_bound":p_minus_one_bound},"note":"RSA checks are bounded; negative results do not establish security"});
             let audit = store.save_audit(&report)?;
             report["audit_id"] = json!(audit);
             emit(&report)

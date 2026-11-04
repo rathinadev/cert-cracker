@@ -182,7 +182,55 @@ fn trial(n: &BigUint, limit: u64) -> Option<(BigUint, BigUint)> {
     None
 }
 
+/// Stage 1 Pollard p-1 with a fixed base; no stage 2 or probabilistic guarantee.
+pub fn pollard_p_minus_one(n: &BigUint, bound: u32) -> Option<(BigUint, BigUint)> {
+    if !(2..=100_000).contains(&bound) || *n <= BigUint::from(3u8) {
+        return None;
+    }
+    let base = BigUint::from(2u8);
+    let g = base.gcd(n);
+    if g > BigUint::one() && g < *n {
+        return Some((g.clone(), n / g));
+    }
+    let mut primes = vec![true; bound as usize + 1];
+    primes[0] = false;
+    primes[1] = false;
+    for p in 2..=bound as usize {
+        if primes[p] && p <= bound as usize / p {
+            for multiple in (p * p..=bound as usize).step_by(p) {
+                primes[multiple] = false;
+            }
+        }
+    }
+    let mut a = base % n;
+    for (p, prime) in primes.into_iter().enumerate().skip(2) {
+        if !prime {
+            continue;
+        }
+        let mut power = p as u64;
+        while power <= u64::from(bound) / p as u64 {
+            power *= p as u64;
+        }
+        a = a.modpow(&BigUint::from(power), n);
+    }
+    let g = ((a + n - 1u8) % n).gcd(n);
+    if g > BigUint::one() && g < *n {
+        Some((g.clone(), n / g))
+    } else {
+        None
+    }
+}
+
 pub fn analyze(targets: &[Target], trial_limit: u64, fermat_steps: u64) -> Result<Vec<Analysis>> {
+    analyze_with_p_minus_one(targets, trial_limit, fermat_steps, 0)
+}
+
+pub fn analyze_with_p_minus_one(
+    targets: &[Target],
+    trial_limit: u64,
+    fermat_steps: u64,
+    p_minus_one_bound: u32,
+) -> Result<Vec<Analysis>> {
     ensure!(
         trial_limit <= 1_000_000 && fermat_steps <= 1_000_000,
         "audit budgets must be <=1000000; use a specialized engine for larger jobs"
@@ -190,6 +238,15 @@ pub fn analyze(targets: &[Target], trial_limit: u64, fermat_steps: u64) -> Resul
     ensure!(
         targets.len() <= 4096,
         "reference pairwise shared-prime audit is limited to 4096 targets"
+    );
+    ensure!(p_minus_one_bound <= 100_000, "p-1 bound must be <=100000");
+    ensure!(
+        p_minus_one_bound == 0 || targets.len() <= 256,
+        "p-1 audit is limited to 256 targets"
+    );
+    ensure!(
+        p_minus_one_bound == 0 || p_minus_one_bound >= 2,
+        "p-1 bound must be 0 or at least 2"
     );
     let mut rsa = vec![];
     for t in targets {
@@ -244,6 +301,13 @@ pub fn analyze(targets: &[Target], trial_limit: u64, fermat_steps: u64) -> Resul
             checks.push(format!("fermat_iterations_{fermat_steps}"));
             candidate = fermat(n, fermat_steps).map(|(p, q)| ("fermat", p, q));
         }
+        if candidate.is_none() && p_minus_one_bound > 0 {
+            checks.push(format!(
+                "pollard_p_minus_one_stage1_bound_{p_minus_one_bound}_base_2"
+            ));
+            candidate = pollard_p_minus_one(n, p_minus_one_bound)
+                .map(|(p, q)| ("pollard_p_minus_one_stage1", p, q));
+        }
         let (outcome, method, private_pem) = if let Some((method, p, q)) = candidate {
             match rsa_private(t, &p, &q) {
                 Ok(pem) => ("verified_recovery", Some(method.into()), Some(pem)),
@@ -283,5 +347,16 @@ mod tests {
         let e = inverse(&BigUint::from(5u8), &BigUint::from(1008u32 * 1012)).unwrap();
         let (p, q) = wiener(&n, &e).unwrap();
         assert_eq!(p * q, n);
+    }
+    #[test]
+    fn bounded_p_minus_one_finds_only_nontrivial_factors() {
+        let n = BigUint::from(1009u32 * 1019);
+        assert!(pollard_p_minus_one(&n, 2).is_none());
+        let (p, q) = pollard_p_minus_one(&n, 16).unwrap();
+        assert_eq!(p * q, n);
+        assert!(pollard_p_minus_one(&BigUint::from(1019u32), 16).is_none());
+        assert!(pollard_p_minus_one(&n, 100_001).is_none());
+        // A full-modulus GCD is not a factorization.
+        assert!(pollard_p_minus_one(&BigUint::from(17u32 * 257), 256).is_none());
     }
 }
