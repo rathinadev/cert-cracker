@@ -12,3 +12,5 @@ pub mod storage;
 pub mod signatures;
 
 pub mod backup;
+
+pub mod vault;

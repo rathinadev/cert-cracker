@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.10.0 — 4 November 2026
+
+- Add an optional password-unlocked vault for new findings using scrypt and AES-256-GCM. Vault initialization refuses states with existing findings, and locked searches stop before progress.
+
 ## 0.9.0 — 4 November 2026
 
 - Add stopped-state backup using SQLite backup, private artifact copies, BSGS manifest checksum validation, and an atomic completion marker.

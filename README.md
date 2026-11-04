@@ -2,7 +2,7 @@
 
 A local Rust CLI for public-key inspection and bounded weak-key recovery, with native OpenSSL mathematics, multicore ECC workers, and durable SQLite checkpoints.
 
-Version **0.9.0** adds a local backup command and an opt-in Pollard p-1 RSA check and an ECDSA repeated-nonce audit and incremental durable kangaroo point storage alongside optional locally calibrated estimates and experimental cooperative kangaroo to the sequential, BSGS and independent kangaroo CPU engines in [PLAN.md](PLAN.md). It is a development preview, not the complete roadmap or a claim that modern cryptography can generally be cracked.
+Version **0.10.0** adds an optional encrypted findings vault. The CPU development preview also includes bounded EC and RSA analysis, cooperative kangaroo, local calibration, and backups; see [PLAN.md](PLAN.md) for the remaining roadmap.
 
 ## Implemented
 
@@ -21,6 +21,7 @@ Version **0.9.0** adds a local backup command and an opt-in Pollard p-1 RSA chec
 - Independently recompute a matched EC public key before persisting a verified finding.
 - Run bounded RSA shared-prime, Wiener, trial-division, Fermat and opt-in Pollard p-1 checks. Reconstruct and verify supported semiprime private keys, including a signature round trip.
 - Persist RSA audit history, including completed negative checks and their budgets.
+- Optionally encrypt newly recovered keys with a password-unlocked vault.
 - Back up a stopped state and its BSGS artifacts to a new directory, checking database integrity and referenced artifact checksums.
 - Verify supplied ECDSA signatures and check distinct signed digests for repeated nonce recovery.
 - Export reports without private material. Export recovered private keys only through a separate explicit command to a new file.
@@ -198,7 +199,21 @@ Supply the signer's public key or certificate and a JSON file with exact digest 
 ./dist/cert-cracker --state ./state audit-signatures --input ./signer.pem --dataset ./signatures.json
 ```
 
-Each signature must verify against that signer and digest before the audit runs. The digest must be the actual digest used during signing; the tool cannot establish which message produced it. It handles opposite-sign `s` encodings, ignores exact duplicate evidence, and independently verifies a candidate private key before storing a finding. Recovered keys are stored in the private state database and are not encrypted at rest. Input is limited to 1,024 signatures and 4 MiB; at most 4,096 eligible signature pairs are checked, with a distinct incomplete outcome if that limit is reached. A negative result does not prove nonce security.
+Each signature must verify against that signer and digest before the audit runs. The digest must be the actual digest used during signing; the tool cannot establish which message produced it. It handles opposite-sign `s` encodings, ignores exact duplicate evidence, and independently verifies a candidate private key before storing a finding. Recovered keys are stored in the private state database; enable the optional vault before collecting findings to encrypt them. Input is limited to 1,024 signatures and 4 MiB; at most 4,096 eligible signature pairs are checked, with a distinct incomplete outcome if that limit is reached. A negative result does not prove nonce security.
+
+## Encrypt new findings
+
+Vault setup is optional and requires a state with **no existing findings**. It never migrates or deletes old findings. First create a private password file containing a strong, unique password of 12–4096 bytes; on Unix it must not be accessible by group or others (for example, `chmod 600 password-file`). Keep it separate from the state and its backups, and retain a secure copy. Losing it prevents key export.
+
+```sh
+./dist/cert-cracker --state ./state --vault-password-file ./password-file vault-init
+./dist/cert-cracker --state ./state --vault-password-file ./password-file search \
+  --input ./lab/certificate.pem --end 1000000 --method auto
+./dist/cert-cracker --state ./state --vault-password-file ./password-file \
+  export-key FINDING_ID --output ./recovered.pem
+```
+
+The vault derives a key with scrypt (N=32768, r=8, p=1) and encrypts each private-key blob with AES-256-GCM and a fresh random nonce. Finding identity and target are authenticated. Searches require an unlocked vault before work begins; listing and status remain available without it. The password file itself, exported keys, other database content, and artifacts remain unencrypted. Backups preserve encrypted blobs but do not include the password file. Earlier plaintext databases, WAL files and backups are not erased or converted. This development-preview implementation has not undergone an independent security audit.
 
 ## Backup and restore
 
@@ -209,7 +224,7 @@ Stop running coordinators, then create a backup in a **new** directory on local 
 ./dist/cert-cracker --state ./state-backup jobs list
 ```
 
-The command locks the source against other coordinators, uses SQLite's backup API, checks database integrity, copies artifact files, and verifies committed checksums for referenced BSGS artifacts. `BACKUP_COMPLETE.json` is published atomically after those checks and records file hashes. An error or interruption may leave a partial directory without that marker; remove or inspect that partial directory before retrying. The backup contains private keys and is **not encrypted**. Protect it accordingly. Opening the completed backup as a state directory can modify it; make an additional copy first if you need to preserve the backup as an archive.
+The command locks the source against other coordinators, uses SQLite's backup API, checks database integrity, copies artifact files, and verifies committed checksums for referenced BSGS artifacts. `BACKUP_COMPLETE.json` is published atomically after those checks and records file hashes. An error or interruption may leave a partial directory without that marker; remove or inspect that partial directory before retrying. A backup may contain unencrypted private keys if the source vault was not enabled; metadata and other state are not encrypted even when the vault is enabled. Protect all backups accordingly. Opening the completed backup as a state directory can modify it; make an additional copy first if you need to preserve the backup as an archive.
 
 ## Storage and privacy
 
@@ -217,9 +232,9 @@ Each state directory contains `state.sqlite`, SQLite journal sidecars when activ
 
 BSGS also requires the referenced files in `artifacts/`. Preserve them with the database when backing up or moving a stopped state directory. New artifact generations are synced before their manifests are committed; an uncommitted build tail can replay after a crash. A missing or corrupt committed table is an error and never silently resets existing search coverage.
 
-The writer upgrades schemas 1–4 to schema 5 transactionally. Earlier executables cannot open an upgraded database. Keep a quiescent backup before using the new version with important existing state. Existing specifications retain their hashes; migration preserves completed work and artifacts. Existing kangaroo snapshots convert to incremental point rows on their next successful checkpoint, in the same transaction as the walk position.
+The writer upgrades schemas 1–5 to schema 6 transactionally. Earlier executables cannot open an upgraded database. Keep a quiescent backup before using the new version with important existing state. Existing specifications retain their hashes; migration preserves completed work and artifacts. Existing kangaroo snapshots convert to incremental point rows on their next successful checkpoint, in the same transaction as the walk position.
 
-The database includes recovered private material and uses private Unix file permissions. **It is not encrypted at rest.** Normal reports and diagnostic output omit private keys. Development preview secret storage, Windows ACL behavior and encrypted key wrapping need further hardening before general distribution.
+By default recovered private keys are not encrypted; explicitly initialize the vault before collecting findings to encrypt them. Normal reports and diagnostic output omit private keys. Only finding key blobs are encrypted: database metadata, artifacts, exported keys, and the password file are not. Windows ACL behavior and broader security hardening need further review before general distribution.
 
 The application operates on local inputs. It does not upload keys, install certificates, change browser trust, or invoke third-party recovery services.
 
@@ -237,6 +252,6 @@ The expanded suite has **46 tests**, including differential results on four curv
 
 ## Not yet implemented
 
-External kangaroo adapters, GPU kernels, nonce-bias analysis, EdDSA seed recovery, batch-GCD trees, ECM/NFS adapters, a dashboard, distributed workers, encrypted secret storage, and full certificate-chain trust validation are not included. Inspection support for a key family does not imply a recovery engine for it. Use `capabilities` for the current executable's declared scope.
+External kangaroo adapters, GPU kernels, nonce-bias analysis, EdDSA seed recovery, batch-GCD trees, ECM/NFS adapters, a dashboard, distributed workers, encrypted storage for all database contents, and full certificate-chain trust validation are not included. Inspection support for a key family does not imply a recovery engine for it. Use `capabilities` for the current executable's declared scope.
 
 The full roadmap and milestone acceptance criteria remain in [PLAN.md](PLAN.md).

@@ -1,6 +1,6 @@
 # Implementation status — 4 November 2026
 
-Version: **0.9.0 CPU development preview**.
+Version: **0.10.0 CPU development preview**.
 
 The CPU foundation from M1–M3, BSGS and experimental independent and cooperative native kangaroo modes are working. The complete PLAN.md roadmap remains in progress. Compatible external adapters remain additional M4 work.
 
@@ -24,6 +24,7 @@ The CPU foundation from M1–M3, BSGS and experimental independent and cooperati
 - Independent EC candidate recomputation before durable discovery storage.
 - Bounded RSA shared-prime, Wiener, trial, Fermat and opt-in single-base Pollard p-1 stage-1 checks, private reconstruction and modular/signature verification as applicable.
 - Persisted audit history, public reports, verified private-key export to a new file.
+- Opt-in scrypt/AES-256-GCM encryption for new finding key blobs, requiring an unlocked vault before searches. Existing findings are not migrated.
 - Stopped-state SQLite and artifact backup with completion marker, integrity check, referenced BSGS checksums and resume tests.
 - Bounded ECDSA repeated-nonce audit over signatures verified against one signer and supplied digests, with independent recovered-key verification.
 - Laboratory fixture generation, runtime capability reporting and an end-to-end benchmark command.
@@ -34,7 +35,7 @@ The CPU foundation from M1–M3, BSGS and experimental independent and cooperati
 
 - `cargo fmt --all -- --check`: passed.
 - `cargo clippy --all-targets --locked -- -D warnings`: passed.
-- `cargo test --locked`: **56 tests passed** (8 unit tests, 48 integration tests).
+- `cargo test --locked`: **59 tests passed** (8 unit tests, 51 integration tests).
 - Actual SIGKILL of a child search followed by resume with a different worker count: passed; final coverage was exactly the configured range.
 - Actual SIGKILL during BSGS table construction and giant searching: passed, including changed worker counts and ready-table reuse.
 - Differential sequential/BSGS results on four curves, infinity entries, partial final blocks, subgroup-boundary exclusions and large offsets: passed.
@@ -89,7 +90,7 @@ Machine: macOS ARM64, 10 logical CPUs. OpenSSL 3.6.4; SQLite 3.54.1; optimized R
 - GPU kernels and actual hardware validation.
 - Dashboard and authenticated live-control service.
 - Distributed workers and global resource budgets.
-- Encrypted secret storage, deeper fuzz/fault testing and broader platform packaging.
+- Vault migration, password rotation, external security review, deeper fuzz/fault testing and broader platform packaging.
 - Unknown-algorithm metadata preservation beyond what the linked OpenSSL backend can parse.
 - Cross-plan coverage reuse, shared multi-target EC scans and a richer job queue.
 
@@ -97,10 +98,10 @@ GitHub CI for version 0.3 passed on Linux, macOS and Windows after the Windows l
 
 ## Current operational limits
 
-Recovered private keys are stored in a database protected with private Unix permissions; **they are not encrypted at rest**. Export refuses overwrite. RSA audits are short bounded checks and rerun after interruption; resumable long-search support applies to sequential, BSGS and kangaroo EC searches. Only one coordinator mutates a state directory at a time. A killed invocation can leave the last lifecycle status `running` and its elapsed time can be undercounted; resume reclaims its committed work.
+Recovered private keys are unencrypted by default; an optional vault encrypts new key blobs. Other state and exports remain unencrypted. Export refuses overwrite. RSA audits are short bounded checks and rerun after interruption; resumable long-search support applies to sequential, BSGS and kangaroo EC searches. Only one coordinator mutates a state directory at a time. A killed invocation can leave the last lifecycle status `running` and its elapsed time can be undercounted; resume reclaims its committed work.
 
 BSGS table construction is sequential; giant searching uses multiple cores. Its memory budget covers the table and reserved workspace, not total process RSS. Kangaroo supports independent tame/wild pairs and opt-in cooperative collision sharing, with strict point capacities and incremental durable point writes. Budget exhaustion cannot exclude an in-range key. Native/runtime baseline RSS and SQLite cache are additional to the reserved kangaroo working set. Optional calibration gives coarse budget estimates; it does not claim a guaranteed wall-clock ETA or numeric kangaroo success probability.
 
-Schema 5 preserves existing specification hashes and migrates older databases transactionally; older executables cannot read schema 5. Back up the stopped database and referenced artifacts together. See `docs/BSGS.md` and `docs/KANGAROO.md` for the format and checkpoint contracts.
+Schema 6 preserves existing specification hashes and migrates older databases transactionally; older executables cannot read schema 6. Back up the stopped database and referenced artifacts together. See `docs/BSGS.md` and `docs/KANGAROO.md` for the format and checkpoint contracts.
 
 Full certificate-chain trust validation, browser trust changes and network collection are outside this release. Capability output explicitly distinguishes inspection from recovery and lists unavailable engines.

@@ -414,7 +414,7 @@ fn schema_four_walk_migrates_lazily_and_point_corruption_is_detected() {
                 rusqlite::params![expected, fingerprint(expected.as_bytes())],
             )
             .unwrap();
-        store.conn.execute_batch("DROP TABLE kangaroo_points; ALTER TABLE kangaroo_states DROP COLUMN storage_format; PRAGMA user_version=4;").unwrap();
+        store.conn.execute_batch("DROP TABLE vault_config; DROP TABLE kangaroo_points; ALTER TABLE kangaroo_states DROP COLUMN storage_format; PRAGMA user_version=4;").unwrap();
     }
     {
         let reader = Store::open(dir.path(), false).unwrap();
@@ -735,7 +735,7 @@ fn schema_three_bsgs_artifact_and_hash_survive_migration() {
         store
             .conn
             .execute_batch(
-                "DROP TABLE kangaroo_points; DROP TABLE kangaroo_states; PRAGMA user_version=3;",
+                "DROP TABLE vault_config; DROP TABLE kangaroo_points; DROP TABLE kangaroo_states; PRAGMA user_version=3;",
             )
             .unwrap();
     }
@@ -771,7 +771,11 @@ fn killed_walk(phase: &str, cooperative: bool) {
             "--kangaroo-attempts",
             "2",
             "--kangaroo-steps",
-            "20000",
+            if cooperative && phase == "wild" {
+                "200000"
+            } else {
+                "20000"
+            },
             "--kangaroo-max-points",
             "128",
             "--memory-mib",

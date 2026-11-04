@@ -105,6 +105,7 @@ fn worker(
 }
 
 pub fn run(store: &mut Store, job: i64, options: RunOptions) -> Result<serde_json::Value> {
+    store.ensure_vault_unlocked()?;
     if store.spec(job)?.kangaroo.is_some() {
         return crate::kangaroo::run(store, job, options);
     }

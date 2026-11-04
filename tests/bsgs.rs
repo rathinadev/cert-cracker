@@ -337,7 +337,7 @@ fn legacy_sequential_hash_and_v2_database_migrate() {
         store
             .conn
             .execute_batch(
-                "DROP TABLE kangaroo_points; DROP TABLE kangaroo_states; DROP TABLE engine_states; PRAGMA user_version=2;",
+                "DROP TABLE vault_config; DROP TABLE kangaroo_points; DROP TABLE kangaroo_states; DROP TABLE engine_states; PRAGMA user_version=2;",
             )
             .unwrap();
     }

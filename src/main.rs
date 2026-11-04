@@ -29,12 +29,17 @@ use std::{
 struct Cli {
     #[arg(long, global = true, default_value = ".cert-cracker")]
     state: PathBuf,
+    /// Private file containing the vault password; never pass a password as an argument.
+    #[arg(long, global = true)]
+    vault_password_file: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
 
 #[derive(Subcommand)]
 enum Command {
+    /// Enable encrypted findings in a state with no existing findings.
+    VaultInit,
     /// Show actual compiled capabilities; unavailable engines remain explicit.
     Capabilities,
     /// Show backend/toolchain and available logical CPU information.
@@ -270,6 +275,43 @@ struct SearchArgs {
 fn default_workers() -> usize {
     std::thread::available_parallelism().map_or(1, |n| n.get().saturating_sub(1).clamp(1, 256))
 }
+fn vault_password(path: &Path) -> Result<zeroize::Zeroizing<Vec<u8>>> {
+    use std::io::Read;
+    let metadata = fs::symlink_metadata(path)?;
+    ensure!(
+        metadata.file_type().is_file(),
+        "vault password must be a regular file, not a symlink"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        ensure!(
+            metadata.permissions().mode() & 0o077 == 0,
+            "vault password file must not be accessible by group or others"
+        );
+    }
+    let mut bytes = zeroize::Zeroizing::new(Vec::new());
+    fs::File::open(path)?.take(4098).read_to_end(&mut bytes)?;
+    if bytes.last() == Some(&b'\n') {
+        bytes.pop();
+        if bytes.last() == Some(&b'\r') {
+            bytes.pop();
+        }
+    }
+    ensure!(
+        (12..=4096).contains(&bytes.len()),
+        "vault password must contain 12..4096 bytes"
+    );
+    Ok(bytes)
+}
+fn open_store(path: &Path, write: bool, password_file: Option<&Path>) -> Result<Store> {
+    let mut store = Store::open(path, write)?;
+    if let Some(path) = password_file {
+        let password = vault_password(path)?;
+        store.unlock_vault(&password)?;
+    }
+    Ok(store)
+}
 fn emit(value: &impl Serialize) -> Result<()> {
     use std::io::Write;
     let mut out = std::io::stdout().lock();
@@ -383,7 +425,17 @@ fn make_plan(store: &Store, target: &str, options: PlanOptions<'_>) -> Result<(i
 
 fn main_result() -> Result<()> {
     let cli = Cli::parse();
+    let password_file = cli.vault_password_file.as_deref();
     match cli.command {
+        Command::VaultInit => {
+            let path = password_file.context("vault-init requires --vault-password-file")?;
+            let password = vault_password(path)?;
+            let mut store = Store::open(&cli.state, true)?;
+            store.initialize_vault(&password)?;
+            emit(
+                &json!({"vault":"enabled","note":"Keep the password safe. Existing findings are not migrated; losing the password prevents key export."}),
+            )
+        }
         Command::Capabilities => emit(&json!({"version":env!("CARGO_PKG_VERSION"),"engines":[
             {"id":"ec-sequential","status":"implemented","hardware":"multicore CPU","checkpoint":"exact per-unit next candidate; uncommitted tails replay","curves":"named EC groups available through OpenSSL; release tests cover P-256/P-384/P-521/secp256k1","methods":["incremental point addition","independent scalar-multiplication verification"]},
             {"id":"ec-bsgs","status":"implemented","hardware":"multicore CPU with one shared immutable table","curves":["P-256","P-384","P-521","secp256k1"],"checkpoint":"durable baby-step ledger, checksummed ready table, exact giant-step cursors","memory_limit":"table/workspace budget; runtime baseline RSS excluded"},
@@ -391,8 +443,8 @@ fn main_result() -> Result<()> {
             {"id":"ecdsa-signature-audit","status":"implemented","methods":["verified repeated nonce for one signer"],"limits":{"signatures":1024,"candidate_pairs":4096},"checkpoint":"bounded audit reruns"},
             {"id":"rsa-audit","status":"implemented","methods":["pairwise shared-prime GCD","Wiener","bounded trial division","bounded Fermat","opt-in Pollard p-1 stage 1"],"limits":{"targets":4096,"max_trial_limit":1000000,"max_fermat_iterations":1000000,"max_p_minus_one_bound":100000,"max_p_minus_one_targets":256},"checkpoint":"short bounded audit reruns; no resumable factorization engine"}],
             "inspection":["EC","RSA","RSA-PSS","DSA","Ed25519","Ed448","DH","X25519","X448","other backend-supported public keys"],
-            "not_implemented":["external kangaroo adapter","GPU kernels","EdDSA seed recovery","ECM/NFS adapters","distributed workers","dashboard","encrypted secret vault","certificate chain trust validation"],
-            "secret_storage":"private state files; not encrypted"})),
+            "not_implemented":["external kangaroo adapter","GPU kernels","EdDSA seed recovery","ECM/NFS adapters","distributed workers","dashboard","certificate chain trust validation"],
+            "secret_storage":"optional password-unlocked encrypted findings; legacy/default states are unencrypted"})),
         Command::Doctor => emit(
             &json!({"version":env!("CARGO_PKG_VERSION"),"openssl":openssl::version::version(),"sqlite":rusqlite::version(),"logical_cpus":std::thread::available_parallelism().map_or(1,|n|n.get()),"default_workers":default_workers(),"architecture":std::env::consts::ARCH,"os":std::env::consts::OS,"gpu_backend":null}),
         ),
@@ -410,7 +462,7 @@ fn main_result() -> Result<()> {
                 let (files, mut errors) = collect_files(&files, recursive);
                 let (targets, parse_errors) = read_targets(&files);
                 errors.extend(parse_errors);
-                let store = Store::open(&cli.state, true)?;
+                let store = open_store(&cli.state, true, password_file)?;
                 let mut ids = vec![];
                 for target in targets {
                     ids.push(store.import(target)?);
@@ -422,11 +474,13 @@ fn main_result() -> Result<()> {
                 );
                 Ok(())
             }
-            TargetCommand::List => emit(&Store::open(&cli.state, false)?.targets()?),
-            TargetCommand::Inspect { id } => emit(&Store::open(&cli.state, false)?.target(&id)?),
+            TargetCommand::List => emit(&open_store(&cli.state, false, password_file)?.targets()?),
+            TargetCommand::Inspect { id } => {
+                emit(&open_store(&cli.state, false, password_file)?.target(&id)?)
+            }
         },
         Command::Plan(args) => {
-            let store = Store::open(&cli.state, true)?;
+            let store = open_store(&cli.state, true, password_file)?;
             let (id, estimate) = make_plan(
                 &store,
                 &args.target,
@@ -493,7 +547,7 @@ fn main_result() -> Result<()> {
             emit(&json!({"saved":output,"profile":profile}))
         }
         Command::Run(args) | Command::Resume(args) => run(
-            &mut Store::open(&cli.state, true)?,
+            &mut open_store(&cli.state, true, password_file)?,
             args.job,
             args.resources,
         ),
@@ -503,7 +557,7 @@ fn main_result() -> Result<()> {
                 targets.len() == 1,
                 "search input must contain exactly one unique key; import a bundle then select a target"
             );
-            let mut store = Store::open(&cli.state, true)?;
+            let mut store = open_store(&cli.state, true, password_file)?;
             let target = store.import(targets.into_iter().next().unwrap())?;
             let (id, estimate) = make_plan(
                 &store,
@@ -533,7 +587,7 @@ fn main_result() -> Result<()> {
             run(&mut store, id, args.resources)
         }
         Command::Jobs { command } => {
-            let store = Store::open(&cli.state, false)?;
+            let store = open_store(&cli.state, false, password_file)?;
             match command {
                 JobCommand::List => emit(&store.jobs()?),
                 JobCommand::Status { job } => emit(&store.report(job)?),
@@ -545,7 +599,8 @@ fn main_result() -> Result<()> {
             fermat_steps,
             p_minus_one_bound,
         } => {
-            let mut store = Store::open(&cli.state, true)?;
+            let mut store = open_store(&cli.state, true, password_file)?;
+            store.ensure_vault_unlocked()?;
             let targets = if files.is_empty() {
                 store.targets()?
             } else {
@@ -591,7 +646,7 @@ fn main_result() -> Result<()> {
             );
             let data = signatures::load(&dataset)?;
             let mut report = signatures::audit(&targets[0], &data)?;
-            let mut store = Store::open(&cli.state, true)?;
+            let mut store = open_store(&cli.state, true, password_file)?;
             store.import(targets[0].clone())?;
             if let Some(pem) = report.private_pem.take() {
                 report.finding_id =
@@ -602,8 +657,8 @@ fn main_result() -> Result<()> {
             result["audit_id"] = json!(audit);
             emit(&result)
         }
-        Command::Findings => emit(&Store::open(&cli.state, false)?.findings()?),
-        Command::Audits => emit(&Store::open(&cli.state, false)?.audits()?),
+        Command::Findings => emit(&open_store(&cli.state, false, password_file)?.findings()?),
+        Command::Audits => emit(&open_store(&cli.state, false, password_file)?.audits()?),
         Command::Backup { output } => {
             let report = backup::create(&cli.state, &output)?;
             emit(&json!({"destination":output,"backup":report}))
@@ -674,7 +729,7 @@ fn main_result() -> Result<()> {
             )
         }
         Command::Report { job, output } => {
-            let report = Store::open(&cli.state, false)?.report(job)?;
+            let report = open_store(&cli.state, false, password_file)?.report(job)?;
             if let Some(path) = output {
                 use std::io::Write;
                 let mut file = private_file(&path)?;
@@ -687,7 +742,7 @@ fn main_result() -> Result<()> {
             }
         }
         Command::ExportKey { finding, output } => {
-            Store::open(&cli.state, false)?.export_key(finding, &output)?;
+            open_store(&cli.state, false, password_file)?.export_key(finding, &output)?;
             emit(&json!({"finding_id":finding,"saved_private_key":output}))
         }
         Command::Lab { out, curve, scalar } => {

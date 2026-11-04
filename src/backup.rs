@@ -58,6 +58,17 @@ fn sync_dir(path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn create_private_dir(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        fs::DirBuilder::new().mode(0o700).create(path)?;
+    }
+    #[cfg(not(unix))]
+    fs::create_dir(path)?;
+    Ok(())
+}
+
 fn validate_artifact_manifests(store: &Store, destination: &Path) -> Result<()> {
     let mut stmt = store.conn.prepare("SELECT id FROM jobs ORDER BY id")?;
     let jobs = stmt.query_map([], |r| r.get::<_, i64>(0))?;
@@ -154,15 +165,7 @@ pub fn create(source: &Path, destination: &Path) -> Result<BackupReport> {
         .context("another coordinator owns this state directory; stop it before backup")?;
     let store = Store::open(&source, false)?;
     // create_dir is atomic and refuses an existing destination.
-    let mut builder = fs::DirBuilder::new();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        builder.mode(0o700);
-    }
-    builder
-        .create(&destination)
-        .context("creating new backup directory")?;
+    create_private_dir(&destination).context("creating new backup directory")?;
     sync_dir(&parent)?;
     let db = destination.join("state.sqlite");
     drop(private_file(&db)?);
@@ -190,13 +193,7 @@ pub fn create(source: &Path, destination: &Path) -> Result<BackupReport> {
             "source artifacts path is not a directory"
         );
         let target = destination.join("artifacts");
-        let mut builder = fs::DirBuilder::new();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt;
-            builder.mode(0o700);
-        }
-        builder.create(&target)?;
+        create_private_dir(&target)?;
         let mut entries = fs::read_dir(original)?.collect::<std::io::Result<Vec<_>>>()?;
         ensure!(entries.len() <= 100_000, "too many artifact files");
         entries.sort_by_key(|entry| entry.file_name());

@@ -50,9 +50,72 @@ pub struct Store {
     pub conn: Connection,
     _lock: Option<File>,
     pub path: PathBuf,
+    vault_key: Option<crate::vault::Key>,
 }
 
 impl Store {
+    pub fn vault_enabled(&self) -> Result<bool> {
+        let version: i64 = self
+            .conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))?;
+        if version < 6 {
+            return Ok(false);
+        }
+        Ok(self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM vault_config WHERE id=1)",
+            [],
+            |r| r.get(0),
+        )?)
+    }
+
+    pub fn initialize_vault(&mut self, password: &[u8]) -> Result<()> {
+        ensure!(!self.vault_enabled()?, "vault is already enabled");
+        let count: i64 = self
+            .conn
+            .query_row("SELECT count(*) FROM findings", [], |r| r.get(0))?;
+        ensure!(
+            count == 0,
+            "vault setup requires a state with no existing findings; existing keys are not migrated"
+        );
+        let salt = crate::vault::random_salt()?;
+        let key = crate::vault::derive(password, &salt)?;
+        let verifier =
+            crate::vault::seal(&key[..], crate::vault::CHECK_AAD, crate::vault::CHECK_VALUE)?;
+        self.conn.execute(
+            "INSERT INTO vault_config(id,version,salt,verifier) VALUES(1,1,?1,?2)",
+            params![salt.as_slice(), verifier],
+        )?;
+        self.vault_key = Some(key);
+        Ok(())
+    }
+
+    pub fn unlock_vault(&mut self, password: &[u8]) -> Result<()> {
+        ensure!(self.vault_enabled()?, "vault is not enabled for this state");
+        let (version, salt, verifier): (i64, Vec<u8>, Vec<u8>) = self.conn.query_row(
+            "SELECT version,salt,verifier FROM vault_config WHERE id=1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        ensure!(version == 1, "unsupported vault version");
+        let key = crate::vault::derive(password, &salt)?;
+        let check = crate::vault::open(&key[..], crate::vault::CHECK_AAD, &verifier)
+            .context("wrong vault password or damaged vault")?;
+        ensure!(
+            check.as_slice() == crate::vault::CHECK_VALUE,
+            "wrong vault password or damaged vault"
+        );
+        self.vault_key = Some(key);
+        Ok(())
+    }
+
+    pub fn ensure_vault_unlocked(&self) -> Result<()> {
+        ensure!(
+            !self.vault_enabled()? || self.vault_key.is_some(),
+            "vault is locked; supply --vault-password-file before starting recovery"
+        );
+        Ok(())
+    }
+
     pub fn open(dir: &Path, write: bool) -> Result<Self> {
         ensure!(
             rusqlite::version_number() >= 3_051_003,
@@ -102,7 +165,7 @@ impl Store {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
         ensure!(
-            version <= 5,
+            version <= 6,
             "state database was created by a newer schema; refusing to modify it"
         );
         if write {
@@ -137,13 +200,17 @@ impl Store {
             if version < 5 {
                 conn.execute_batch("BEGIN IMMEDIATE;ALTER TABLE kangaroo_states ADD COLUMN storage_format INTEGER NOT NULL DEFAULT 1;CREATE TABLE kangaroo_points(unit_id INTEGER NOT NULL REFERENCES kangaroo_states(unit_id),kind INTEGER NOT NULL CHECK(kind IN (0,1)),point TEXT NOT NULL,distance TEXT NOT NULL,PRIMARY KEY(unit_id,kind,point)) WITHOUT ROWID;PRAGMA user_version=5;COMMIT;")?;
             }
+            if version < 6 {
+                conn.execute_batch("BEGIN IMMEDIATE;CREATE TABLE vault_config(id INTEGER PRIMARY KEY CHECK(id=1),version INTEGER NOT NULL,salt BLOB NOT NULL,verifier BLOB NOT NULL);PRAGMA user_version=6;COMMIT;")?;
+            }
         } else {
-            ensure!((1..=5).contains(&version), "uninitialized state database");
+            ensure!((1..=6).contains(&version), "uninitialized state database");
         }
         Ok(Self {
             conn,
             _lock: lock,
             path,
+            vault_key: None,
         })
     }
 
@@ -327,10 +394,25 @@ impl Store {
         pem: &[u8],
     ) -> Result<i64> {
         crate::crypto::verify_private(target, pem)?;
+        self.ensure_vault_unlocked()?;
+        let encrypted = self.vault_enabled()?;
         let public = json!({"target_id":target.id,"method":method,"outcome":"verified_recovery","private_material":"stored in private state database; excluded from reports"});
         let tx = self.conn.transaction()?;
-        tx.execute("INSERT INTO findings(target_id,job_id,method,public_record,private_pem,created_at) VALUES(?1,?2,?3,?4,?5,?6)",params![target.id,job,method,public.to_string(),pem,now()])?;
+        let initial: &[u8] = if encrypted { &[] } else { pem };
+        tx.execute("INSERT INTO findings(target_id,job_id,method,public_record,private_pem,created_at) VALUES(?1,?2,?3,?4,?5,?6)",params![target.id,job,method,public.to_string(),initial,now()])?;
         let finding = tx.last_insert_rowid();
+        if encrypted {
+            let key = self.vault_key.as_ref().context("vault is locked")?;
+            let sealed = crate::vault::seal(
+                &key[..],
+                &crate::vault::finding_aad(finding, &target.id),
+                pem,
+            )?;
+            tx.execute(
+                "UPDATE findings SET private_pem=?2 WHERE id=?1",
+                params![finding, sealed],
+            )?;
+        }
         if let Some(job) = job {
             tx.execute(
                 "UPDATE jobs SET status='recovered',finding_id=?2,updated_at=?3 WHERE id=?1",
@@ -413,7 +495,7 @@ impl Store {
             _ => "in_progress",
         };
         let bsgs = spec.bsgs.is_some();
-        let mut result = json!({"format_version":2,"job_id":id,"spec":spec,"status":status,"outcome":outcome,"covered_candidates":count.to_str_radix(10),"tested_candidates":if bsgs {None} else {Some(count.to_str_radix(10))},"giant_steps_completed":if bsgs {Some(work_count.to_str_radix(10))} else {None},"coverage":coverage,"engine_state":self.engine_state(id)?,"finding_id":finding,"created_at":created,"last_durable_update":updated,"completed_run_elapsed_ms":elapsed,"error":error,"coverage_note":if bsgs {"half-open scalar intervals algebraically covered by completed giant lookups, not brute-force candidate attempts"} else {"half-open intervals; uncommitted work may replay after a crash; no general security guarantee"},"status_note":"status is last persisted lifecycle; a forced termination can leave it running until resume","timing_note":"elapsed time includes finished invocations; a killed invocation may be undercounted","secret_storage":"private-file permissions; not encrypted at rest"});
+        let mut result = json!({"format_version":2,"job_id":id,"spec":spec,"status":status,"outcome":outcome,"covered_candidates":count.to_str_radix(10),"tested_candidates":if bsgs {None} else {Some(count.to_str_radix(10))},"giant_steps_completed":if bsgs {Some(work_count.to_str_radix(10))} else {None},"coverage":coverage,"engine_state":self.engine_state(id)?,"finding_id":finding,"created_at":created,"last_durable_update":updated,"completed_run_elapsed_ms":elapsed,"error":error,"coverage_note":if bsgs {"half-open scalar intervals algebraically covered by completed giant lookups, not brute-force candidate attempts"} else {"half-open intervals; uncommitted work may replay after a crash; no general security guarantee"},"status_note":"status is last persisted lifecycle; a forced termination can leave it running until resume","timing_note":"elapsed time includes finished invocations; a killed invocation may be undercounted","secret_storage":if self.vault_enabled()? {"encrypted findings in password-unlocked vault; other state is not encrypted"} else {"private-file permissions; findings not encrypted at rest"}});
         if spec.kangaroo.is_some() {
             result["format_version"] = json!(3);
             result["covered_candidates"] = Value::Null;
@@ -843,6 +925,15 @@ impl Store {
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .context("finding not found")?;
+        let pem = if self.vault_enabled()? {
+            let key = self
+                .vault_key
+                .as_ref()
+                .context("vault is locked; supply --vault-password-file")?;
+            crate::vault::open(&key[..], &crate::vault::finding_aad(id, &target), &pem)?
+        } else {
+            zeroize::Zeroizing::new(pem)
+        };
         crate::crypto::verify_private(&self.target(&target)?, &pem)?;
         let mut file = private_file(path)?;
         use std::io::Write;

@@ -657,6 +657,7 @@ fn worker(
 }
 
 pub fn run(store: &mut Store, job: i64, options: RunOptions) -> Result<Value> {
+    store.ensure_vault_unlocked()?;
     let started = Instant::now();
     let spec = store.spec(job)?;
     let config = spec
