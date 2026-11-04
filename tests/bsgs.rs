@@ -2,7 +2,7 @@ use anyhow::Result;
 use cert_cracker::{
     bsgs::{self, Manifest, PrepareOptions},
     crypto, import,
-    model::{BsgsConfig, SearchSpec, number},
+    model::{BsgsConfig, SearchSpec},
     planner::{self, PlanOptions},
     search::{self, RunOptions},
     storage::Store,
@@ -383,6 +383,7 @@ fn cancellation_during_table_validation_preserves_ready_manifest() {
 
 #[cfg(unix)]
 fn kill_at_stage(state: &Path, stage: &str, child: &mut std::process::Child) -> Value {
+    use cert_cracker::model::number;
     let started = Instant::now();
     let mut observed = None;
     while started.elapsed() < Duration::from_secs(20) {

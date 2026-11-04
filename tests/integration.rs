@@ -1,6 +1,6 @@
 use cert_cracker::{
     analysis, crypto, import,
-    model::{SearchSpec, number},
+    model::SearchSpec,
     search::{self, RunOptions},
     storage::Store,
 };
@@ -197,6 +197,7 @@ fn rejected_bounds_and_modified_specification() {
 #[cfg(unix)]
 #[test]
 fn real_process_sigkill_then_resume_with_different_workers() {
+    use cert_cracker::model::number;
     let dir = tempfile::tempdir().unwrap();
     let path = fixture(dir.path(), "P-256", &999999u32.into());
     let state = dir.path().join("state");
