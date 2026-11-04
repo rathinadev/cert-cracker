@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.0 — 4 November 2026
+
+- Store newly discovered kangaroo points incrementally in atomic SQLite checkpoints, with lazy conversion of schema-4 snapshots.
+- Verify reconstructed full snapshots on read; retain old specifications, crash recovery and checksum detection.
+
 ## 0.5.0 — 4 November 2026
 
 - Add optional local throughput calibration and advisory estimates for sequential, BSGS and independent/cooperative kangaroo budgets. Profiles validate their recorded environment and resources.

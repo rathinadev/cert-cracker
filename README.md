@@ -2,7 +2,7 @@
 
 A local Rust CLI for public-key inspection and bounded weak-key recovery, with native OpenSSL mathematics, multicore ECC workers, and durable SQLite checkpoints.
 
-Version **0.5.0** adds optional locally calibrated estimates and experimental cooperative kangaroo to the sequential, BSGS and independent kangaroo CPU engines in [PLAN.md](PLAN.md). It is a development preview, not the complete roadmap or a claim that modern cryptography can generally be cracked.
+Version **0.6.0** adds incremental durable kangaroo point storage alongside optional locally calibrated estimates and experimental cooperative kangaroo to the sequential, BSGS and independent kangaroo CPU engines in [PLAN.md](PLAN.md). It is a development preview, not the complete roadmap or a claim that modern cryptography can generally be cracked.
 
 ## Implemented
 
@@ -188,7 +188,7 @@ Each state directory contains `state.sqlite`, SQLite journal sidecars when activ
 
 BSGS also requires the referenced files in `artifacts/`. Preserve them with the database when backing up or moving a stopped state directory. New artifact generations are synced before their manifests are committed; an uncommitted build tail can replay after a crash. A missing or corrupt committed table is an error and never silently resets existing search coverage.
 
-The writer upgrades schemas 1/2/3 to schema 4 transactionally. Earlier executables cannot open an upgraded database. Keep a quiescent backup before using the new version with important existing state. Existing sequential and BSGS specifications retain their hashes; migration preserves their completed work and artifacts. Kangaroo maps and walk positions are stored together inside the database.
+The writer upgrades schemas 1–4 to schema 5 transactionally. Earlier executables cannot open an upgraded database. Keep a quiescent backup before using the new version with important existing state. Existing specifications retain their hashes; migration preserves completed work and artifacts. Existing kangaroo snapshots convert to incremental point rows on their next successful checkpoint, in the same transaction as the walk position.
 
 The database includes recovered private material and uses private Unix file permissions. **It is not encrypted at rest.** Normal reports and diagnostic output omit private keys. Development preview secret storage, Windows ACL behavior, encrypted key wrapping and a complete backup CLI need further hardening before general distribution.
 

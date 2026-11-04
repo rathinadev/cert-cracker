@@ -1,0 +1,45 @@
+{
+  "description": "One local macOS ARM64 run per sample; P-256, outside-range target, cooperative, 2 attempts/workers, 512 points per kind, 5 ms checkpoint interval, 3 repetitions. Results do not generalize across hardware or workloads.",
+  "results": {
+    "full_snapshot_v0.5": {
+      "runs": [
+        {
+          "seconds": 0.0824114169809036,
+          "walk_steps": "9024",
+          "status": "budget_exhausted"
+        },
+        {
+          "seconds": 0.057575999991968274,
+          "walk_steps": "9024",
+          "status": "budget_exhausted"
+        },
+        {
+          "seconds": 0.05949145898921415,
+          "walk_steps": "9024",
+          "status": "budget_exhausted"
+        }
+      ],
+      "median_seconds": 0.05949145898921415
+    },
+    "incremental_v0.6": {
+      "runs": [
+        {
+          "seconds": 0.06723029099521227,
+          "walk_steps": "9024",
+          "status": "budget_exhausted"
+        },
+        {
+          "seconds": 0.06682829197961837,
+          "walk_steps": "9024",
+          "status": "budget_exhausted"
+        },
+        {
+          "seconds": 0.06399108399637043,
+          "walk_steps": "9024",
+          "status": "budget_exhausted"
+        }
+      ],
+      "median_seconds": 0.06682829197961837
+    }
+  }
+}

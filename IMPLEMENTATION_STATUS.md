@@ -1,8 +1,8 @@
 # Implementation status — 4 November 2026
 
-Version: **0.5.0 CPU development preview**.
+Version: **0.6.0 CPU development preview**.
 
-The CPU foundation from M1–M3, BSGS and experimental independent and cooperative native kangaroo modes are working. The complete PLAN.md roadmap remains in progress. Compatible external adapters and incremental durable map storage remain additional M4 work.
+The CPU foundation from M1–M3, BSGS and experimental independent and cooperative native kangaroo modes are working. The complete PLAN.md roadmap remains in progress. Compatible external adapters remain additional M4 work.
 
 ## Delivered
 
@@ -17,7 +17,7 @@ The CPU foundation from M1–M3, BSGS and experimental independent and cooperati
 - Durable table-building manifests, synced artifact publication, integrity validation and resume through both precomputation and searching.
 - Explicit kangaroo planning, bounded independent CPU attempts, distinguished-point capacities and checksummed atomic walk checkpoints.
 - Opt-in cooperative kangaroo with deterministic starting offsets, shared tame/wild distinguished-point collisions and an index reconstructed from committed snapshots.
-- Incremental collision-index updates at checkpoints; SQLite continues to serialize complete per-attempt point maps.
+- Incremental collision-index updates and durable point-row inserts at checkpoints; full snapshots are reconstructed and hashed for integrity.
 - Stable logical attempt identities across worker-count changes; probabilistic budget outcomes without exhaustive coverage claims.
 - SQLite 3.54.1 with synchronous FULL transactions, schema migration, coordinator locking and per-work-unit generation/cursor validation.
 - Crash recovery, changed worker count on resume, exact gap-aware coverage and duplicate-plan reuse.
@@ -32,7 +32,7 @@ The CPU foundation from M1–M3, BSGS and experimental independent and cooperati
 
 - `cargo fmt --all -- --check`: passed.
 - `cargo clippy --all-targets --locked -- -D warnings`: passed.
-- `cargo test --locked`: **48 tests passed** (5 unit tests, 43 integration tests).
+- `cargo test --locked`: **49 tests passed** (5 unit tests, 44 integration tests).
 - Actual SIGKILL of a child search followed by resume with a different worker count: passed; final coverage was exactly the configured range.
 - Actual SIGKILL during BSGS table construction and giant searching: passed, including changed worker counts and ready-table reuse.
 - Differential sequential/BSGS results on four curves, infinity entries, partial final blocks, subgroup-boundary exclusions and large offsets: passed.
@@ -81,7 +81,7 @@ Machine: macOS ARM64, 10 logical CPUs. OpenSSL 3.6.4; SQLite 3.54.1; optimized R
 
 ## Remaining roadmap
 
-- Incremental durable point storage and compatible external-engine adapters.
+- Compatible external-engine adapters.
 - Batch-GCD trees and advanced RSA factorization adapters.
 - Signature nonce analysis and explicit EdDSA seed hypotheses.
 - GPU kernels and actual hardware validation.
@@ -97,8 +97,8 @@ GitHub CI for version 0.3 passed on Linux, macOS and Windows after the Windows l
 
 Recovered private keys are stored in a database protected with private Unix permissions; **they are not encrypted at rest**. Export refuses overwrite. RSA audits are short bounded checks and rerun after interruption; resumable long-search support applies to sequential, BSGS and kangaroo EC searches. Only one coordinator mutates a state directory at a time. A killed invocation can leave the last lifecycle status `running` and its elapsed time can be undercounted; resume reclaims its committed work.
 
-BSGS table construction is sequential; giant searching uses multiple cores. Its memory budget covers the table and reserved workspace, not total process RSS. Kangaroo supports independent tame/wild pairs and opt-in cooperative collision sharing, with strict point capacities and full-map checkpoint writes. Budget exhaustion cannot exclude an in-range key. Native/runtime baseline RSS and SQLite cache are additional to the reserved kangaroo working set. Optional calibration gives coarse budget estimates; it does not claim a guaranteed wall-clock ETA or numeric kangaroo success probability.
+BSGS table construction is sequential; giant searching uses multiple cores. Its memory budget covers the table and reserved workspace, not total process RSS. Kangaroo supports independent tame/wild pairs and opt-in cooperative collision sharing, with strict point capacities and incremental durable point writes. Budget exhaustion cannot exclude an in-range key. Native/runtime baseline RSS and SQLite cache are additional to the reserved kangaroo working set. Optional calibration gives coarse budget estimates; it does not claim a guaranteed wall-clock ETA or numeric kangaroo success probability.
 
-Schema 4 preserves old sequential/BSGS specification hashes and migrates older databases transactionally; older executables cannot read schema 4. Back up the stopped database and referenced artifacts together. See `docs/BSGS.md` and `docs/KANGAROO.md` for the format and checkpoint contracts.
+Schema 5 preserves existing specification hashes and migrates older databases transactionally; older executables cannot read schema 5. Back up the stopped database and referenced artifacts together. See `docs/BSGS.md` and `docs/KANGAROO.md` for the format and checkpoint contracts.
 
 Full certificate-chain trust validation, browser trust changes and network collection are outside this release. Capability output explicitly distinguishes inspection from recovery and lists unavailable engines.

@@ -351,14 +351,126 @@ fn saturated_table_stays_bounded_and_reports_saturation() {
 }
 
 fn states(store: &Store, job: i64) -> Vec<String> {
-    store
+    let spec = store.spec(job).unwrap();
+    let mut stmt = store
         .conn
-        .prepare("SELECT record FROM kangaroo_states WHERE job_id=?1 ORDER BY unit_id")
-        .unwrap()
-        .query_map([job], |r| r.get(0))
-        .unwrap()
-        .map(Result::unwrap)
-        .collect()
+        .prepare("SELECT id,start,end,next,generation FROM work_units WHERE job_id=?1 ORDER BY id")
+        .unwrap();
+    let rows = stmt
+        .query_map([job], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, i64>(4)?,
+            ))
+        })
+        .unwrap();
+    rows.map(|row| {
+        let (id, start, end, next, generation) = row.unwrap();
+        let unit = cert_cracker::model::WorkUnit {
+            id,
+            generation,
+            start: number(&start).unwrap(),
+            end: number(&end).unwrap(),
+            next: number(&next).unwrap(),
+        };
+        serde_json::to_string(&store.kangaroo_state(job, &unit, &spec).unwrap().unwrap()).unwrap()
+    })
+    .collect()
+}
+
+#[test]
+fn schema_four_walk_migrates_lazily_and_point_corruption_is_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let t = target("P-256", 1234u32.into());
+    let k = KangarooOptions {
+        attempts: Some(1),
+        max_points: Some(16),
+        ..Default::default()
+    };
+    let spec = plan(&t, "1", "1001", &k, 1, 16).unwrap();
+    let job;
+    let expected;
+    {
+        let mut store = Store::open(dir.path(), true).unwrap();
+        store.import(t.clone()).unwrap();
+        job = store.create_job(&spec).unwrap();
+        let initial = kangaroo::initial_snapshot(&t, &spec).unwrap();
+        store.initialize_kangaroo(job, &spec, &initial).unwrap();
+        store.begin_run(job).unwrap();
+        let unit = store.allocate(job).unwrap().unwrap();
+        let mut state = store.kangaroo_state(job, &unit, &spec).unwrap().unwrap();
+        state.points.insert(state.point.clone(), "0x0".into());
+        store
+            .save_kangaroo_state(job, &unit, &spec, &state, false)
+            .unwrap();
+        expected = serde_json::to_string(&state).unwrap();
+        store
+            .conn
+            .execute(
+                "UPDATE kangaroo_states SET record=?1,checksum=?2",
+                rusqlite::params![expected, fingerprint(expected.as_bytes())],
+            )
+            .unwrap();
+        store.conn.execute_batch("DROP TABLE kangaroo_points; ALTER TABLE kangaroo_states DROP COLUMN storage_format; PRAGMA user_version=4;").unwrap();
+    }
+    {
+        let reader = Store::open(dir.path(), false).unwrap();
+        assert_eq!(states(&reader, job), vec![expected.clone()]);
+    }
+    {
+        let mut store = Store::open(dir.path(), true).unwrap();
+        assert_eq!(states(&store, job), vec![expected.clone()]);
+        store.begin_run(job).unwrap();
+        let unit = store.allocate(job).unwrap().unwrap();
+        let state = store.kangaroo_state(job, &unit, &spec).unwrap().unwrap();
+        store
+            .save_kangaroo_state(job, &unit, &spec, &state, false)
+            .unwrap();
+        let (format, count): (i64, i64) = store
+            .conn
+            .query_row(
+                "SELECT storage_format,(SELECT count(*) FROM kangaroo_points) FROM kangaroo_states",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((format, count), (2, 1));
+        assert_eq!(states(&store, job), vec![expected]);
+        store.conn.execute_batch("CREATE TRIGGER forbid_point_rewrite BEFORE UPDATE ON kangaroo_points BEGIN SELECT RAISE(ABORT,'point was rewritten'); END;").unwrap();
+        store
+            .save_kangaroo_state(job, &unit, &spec, &state, false)
+            .unwrap();
+        store.conn.execute_batch("CREATE TRIGGER fail_new_point BEFORE INSERT ON kangaroo_points BEGIN SELECT RAISE(ABORT,'simulated disk failure'); END;").unwrap();
+        let mut next = state.clone();
+        next.points.insert("00".into(), "0x0".into());
+        assert!(
+            store
+                .save_kangaroo_state(job, &unit, &spec, &next, false)
+                .is_err()
+        );
+        assert_eq!(
+            store.kangaroo_state(job, &unit, &spec).unwrap().unwrap(),
+            state
+        );
+        store
+            .conn
+            .execute_batch("DROP TRIGGER fail_new_point; DROP TRIGGER forbid_point_rewrite;")
+            .unwrap();
+        store
+            .conn
+            .execute("UPDATE kangaroo_points SET distance='0x1'", [])
+            .unwrap();
+        assert!(
+            store
+                .kangaroo_state(job, &unit, &spec)
+                .unwrap_err()
+                .to_string()
+                .contains("checksum mismatch")
+        );
+    }
 }
 
 #[test]
@@ -622,7 +734,9 @@ fn schema_three_bsgs_artifact_and_hash_survive_migration() {
         manifest = store.engine_state(job).unwrap();
         store
             .conn
-            .execute_batch("DROP TABLE kangaroo_states; PRAGMA user_version=3;")
+            .execute_batch(
+                "DROP TABLE kangaroo_points; DROP TABLE kangaroo_states; PRAGMA user_version=3;",
+            )
             .unwrap();
     }
     let mut store = Store::open(dir.path(), true).unwrap();

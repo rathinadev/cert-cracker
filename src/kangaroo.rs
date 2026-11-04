@@ -2,7 +2,7 @@
 use crate::{
     crypto::{bignum, ec_order, recover_ec},
     import::public_key,
-    model::{KangarooConfig, SearchSpec, Target, WorkUnit, canonical, fingerprint, number},
+    model::{KangarooConfig, SearchSpec, Target, WorkUnit, canonical, number},
     search::RunOptions,
     storage::Store,
 };
@@ -904,24 +904,34 @@ pub fn initial_snapshot_for_attempt(
 }
 
 pub fn report(store: &Store, job: i64) -> Result<Value> {
-    let mut stmt = store
-        .conn
-        .prepare("SELECT record,checksum FROM kangaroo_states WHERE job_id=?1 ORDER BY unit_id")?;
+    let mut stmt = store.conn.prepare(
+        "SELECT id,start,end,next,generation FROM work_units WHERE job_id=?1 ORDER BY id",
+    )?;
     let rows = stmt.query_map([job], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        Ok((
+            r.get::<_, i64>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, String>(3)?,
+            r.get::<_, i64>(4)?,
+        ))
     })?;
     let spec = store.spec(job)?;
     let mut steps = BigUint::zero();
     let mut complete = 0u32;
     let mut walks = Vec::new();
     for row in rows {
-        let (record, hash) = row?;
-        ensure!(
-            fingerprint(record.as_bytes()) == hash,
-            "kangaroo checkpoint checksum mismatch"
-        );
-        let state: Snapshot = serde_json::from_str(&record)?;
-        state.validate(&spec, state.attempt)?;
+        let (id, start, end, next, generation) = row?;
+        let unit = WorkUnit {
+            id,
+            generation,
+            start: number(&start)?,
+            end: number(&end)?,
+            next: number(&next)?,
+        };
+        let state = store
+            .kangaroo_state(job, &unit, &spec)?
+            .context("missing kangaroo walk")?;
         steps += state.operations();
         if state.phase == "done" {
             complete += 1;

@@ -396,7 +396,7 @@ fn persisted_negative_audit_and_database_schema_migration() {
         store
             .conn
             .execute_batch(
-                "DROP TABLE engine_states; DROP TABLE kangaroo_states; DROP TABLE audit_runs; PRAGMA user_version=1;",
+                "DROP TABLE engine_states; DROP TABLE kangaroo_points; DROP TABLE kangaroo_states; DROP TABLE audit_runs; PRAGMA user_version=1;",
             )
             .unwrap();
     }
@@ -410,7 +410,7 @@ fn persisted_negative_audit_and_database_schema_migration() {
             .conn
             .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
             .unwrap(),
-        4
+        5
     );
 }
 

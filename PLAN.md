@@ -2,7 +2,7 @@
 
 **Date:** 26 October 2026
 **Project:** `cert-cracker`
-**Status:** Approved implementation roadmap. Version 0.5.0 adds local advisory calibration and experimental cooperative native kangaroo to the CPU foundation and interval BSGS; see IMPLEMENTATION_STATUS.md for current scope.
+**Status:** Approved implementation roadmap. Version 0.6.0 adds incremental durable kangaroo points and local advisory calibration and experimental cooperative native kangaroo to the CPU foundation and interval BSGS; see IMPLEMENTATION_STATUS.md for current scope.
 **Primary decision:** Rust application core, established cryptographic libraries, and interchangeable native CPU/GPU recovery engines.
 
 ## 1. Intended product

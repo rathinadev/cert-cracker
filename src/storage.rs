@@ -102,7 +102,7 @@ impl Store {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
         ensure!(
-            version <= 4,
+            version <= 5,
             "state database was created by a newer schema; refusing to modify it"
         );
         if write {
@@ -134,8 +134,11 @@ impl Store {
             if version < 4 {
                 conn.execute_batch("BEGIN IMMEDIATE;CREATE TABLE kangaroo_states(job_id INTEGER NOT NULL REFERENCES jobs(id),unit_id INTEGER PRIMARY KEY REFERENCES work_units(id),record TEXT NOT NULL,checksum TEXT NOT NULL);CREATE INDEX kangaroo_jobs ON kangaroo_states(job_id);PRAGMA user_version=4;COMMIT;")?;
             }
+            if version < 5 {
+                conn.execute_batch("BEGIN IMMEDIATE;ALTER TABLE kangaroo_states ADD COLUMN storage_format INTEGER NOT NULL DEFAULT 1;CREATE TABLE kangaroo_points(unit_id INTEGER NOT NULL REFERENCES kangaroo_states(unit_id),kind INTEGER NOT NULL CHECK(kind IN (0,1)),point TEXT NOT NULL,distance TEXT NOT NULL,PRIMARY KEY(unit_id,kind,point)) WITHOUT ROWID;PRAGMA user_version=5;COMMIT;")?;
+            }
         } else {
-            ensure!((1..=4).contains(&version), "uninitialized state database");
+            ensure!((1..=5).contains(&version), "uninitialized state database");
         }
         Ok(Self {
             conn,
@@ -482,7 +485,7 @@ impl Store {
             let unit = tx.last_insert_rowid();
             let record = serde_json::to_string(&state)?;
             tx.execute(
-                "INSERT INTO kangaroo_states(job_id,unit_id,record,checksum) VALUES(?1,?2,?3,?4)",
+                "INSERT INTO kangaroo_states(job_id,unit_id,record,checksum,storage_format) VALUES(?1,?2,?3,?4,2)",
                 params![
                     job,
                     unit,
@@ -520,12 +523,89 @@ impl Store {
         let max_bytes =
             u64::from(config.max_points) * 512 * if config.state_version == 2 { 2 } else { 1 }
                 + 8192;
-        let (record,checksum):(String,String)=self.conn.query_row("SELECT record,checksum FROM kangaroo_states WHERE job_id=?1 AND unit_id=?2 AND length(record)<=?3",params![job,unit.id,max_bytes as i64],|r|Ok((r.get(0)?,r.get(1)?))).context("missing or oversized kangaroo checkpoint")?;
+        let version: i64 = self
+            .conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))?;
+        let mut state;
+        let checksum: String;
+        let format: i64;
+        let record: String;
+        if version >= 5 {
+            // A single SQLite statement gives the core and point rows one consistent
+            // read snapshot even while a coordinator commits the next checkpoint.
+            let mut query = self.conn.prepare("SELECT s.record,s.checksum,s.storage_format,p.kind,CASE WHEN length(p.point)<=134 THEN p.point END,CASE WHEN length(p.distance)<=270 THEN p.distance END FROM kangaroo_states s LEFT JOIN kangaroo_points p ON p.unit_id=s.unit_id WHERE s.job_id=?1 AND s.unit_id=?2 AND length(s.record)<=?3 LIMIT ?4")?;
+            let mut rows = query.query(params![
+                job,
+                unit.id,
+                max_bytes as i64,
+                i64::from(config.max_points) * 2 + 2
+            ])?;
+            let first = rows
+                .next()?
+                .context("missing or oversized kangaroo checkpoint")?;
+            record = first.get(0)?;
+            checksum = first.get(1)?;
+            format = first.get(2)?;
+            ensure!(
+                format == 1 || format == 2,
+                "unknown kangaroo storage format"
+            );
+            state = serde_json::from_str::<crate::kangaroo::Snapshot>(&record)?;
+            if format == 2 {
+                ensure!(
+                    state.points.is_empty() && state.wild_points.is_empty(),
+                    "incremental checkpoint embeds point maps"
+                );
+            }
+            let mut count = 0u64;
+            let mut add_row = |row: &rusqlite::Row<'_>| -> Result<()> {
+                let kind: Option<i64> = row.get(3)?;
+                if let Some(kind) = kind {
+                    ensure!(
+                        format == 2,
+                        "legacy checkpoint contains separate point rows"
+                    );
+                    count += 1;
+                    ensure!(
+                        count <= u64::from(config.max_points) * 2,
+                        "kangaroo point rows exceed capacity"
+                    );
+                    let point: String = row
+                        .get::<_, Option<String>>(4)?
+                        .context("oversized kangaroo point row")?;
+                    let distance: String = row
+                        .get::<_, Option<String>>(5)?
+                        .context("oversized kangaroo point row")?;
+                    match kind {
+                        0 => {
+                            state.points.insert(point, distance);
+                        }
+                        1 => {
+                            state.wild_points.insert(point, distance);
+                        }
+                        _ => anyhow::bail!("unknown kangaroo point kind"),
+                    }
+                }
+                Ok(())
+            };
+            add_row(first)?;
+            while let Some(row) = rows.next()? {
+                add_row(row)?;
+            }
+        } else {
+            (record, checksum) = self.conn.query_row("SELECT record,checksum FROM kangaroo_states WHERE job_id=?1 AND unit_id=?2 AND length(record)<=?3", params![job,unit.id,max_bytes as i64], |r| Ok((r.get(0)?,r.get(1)?))).context("missing or oversized kangaroo checkpoint")?;
+            format = 1;
+            state = serde_json::from_str(&record)?;
+        }
+        let reconstructed = if format == 1 {
+            record
+        } else {
+            serde_json::to_string(&state)?
+        };
         ensure!(
-            crate::model::fingerprint(record.as_bytes()) == checksum,
+            crate::model::fingerprint(reconstructed.as_bytes()) == checksum,
             "kangaroo checkpoint checksum mismatch"
         );
-        let state: crate::kangaroo::Snapshot = serde_json::from_str(&record)?;
         let attempt = unit.start.to_u32().context("invalid logical attempt")?;
         ensure!(
             unit.end == &unit.start + 1u8,
@@ -587,8 +667,12 @@ impl Store {
             rank(&old.phase) <= rank(&state.phase),
             "regressing kangaroo phase"
         );
-        let record = serde_json::to_string(state)?;
-        let checksum = crate::model::fingerprint(record.as_bytes());
+        let full_record = serde_json::to_string(state)?;
+        let checksum = crate::model::fingerprint(full_record.as_bytes());
+        let mut core = state.clone();
+        core.points.clear();
+        core.wild_points.clear();
+        let record = serde_json::to_string(&core)?;
         let tx = self.conn.transaction()?;
         let (generation, status): (i64, String) = tx.query_row(
             "SELECT generation,status FROM work_units WHERE id=?1 AND job_id=?2",
@@ -604,8 +688,27 @@ impl Store {
             !done || finished,
             "completed walk must finish its work unit"
         );
+        let format: i64 = tx.query_row(
+            "SELECT storage_format FROM kangaroo_states WHERE unit_id=?1 AND job_id=?2",
+            params![unit.id, job],
+            |r| r.get(0),
+        )?;
+        ensure!(
+            format == 1 || format == 2,
+            "unknown kangaroo storage format"
+        );
+        for (kind, points, previous) in [
+            (0, &state.points, &old.points),
+            (1, &state.wild_points, &old.wild_points),
+        ] {
+            for (point, distance) in points {
+                if format == 1 || !previous.contains_key(point) {
+                    tx.execute("INSERT INTO kangaroo_points(unit_id,kind,point,distance) VALUES(?1,?2,?3,?4)",params![unit.id,kind,point,distance])?;
+                }
+            }
+        }
         tx.execute(
-            "UPDATE kangaroo_states SET record=?2,checksum=?3 WHERE unit_id=?1",
+            "UPDATE kangaroo_states SET record=?2,checksum=?3,storage_format=2 WHERE unit_id=?1",
             params![unit.id, record, checksum],
         )?;
         tx.execute(
