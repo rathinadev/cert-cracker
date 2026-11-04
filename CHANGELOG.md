@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.0 — 4 November 2026
+
+- Add opt-in bounded product/remainder-tree batch GCD for RSA shared-factor audits, including duplicate handling and a full-modulus GCD fallback.
+
 ## 0.11.0 — 4 November 2026
 
 - Add atomic vault password rotation, with authenticated re-encryption of existing findings and rollback on damaged ciphertext.

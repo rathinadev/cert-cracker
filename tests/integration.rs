@@ -291,6 +291,12 @@ fn rsa_shared_prime_recovery_and_no_secret_in_report() {
         assert_eq!(result.outcome, "verified_recovery");
         crypto::verify_private(target, result.private_pem.as_ref().unwrap()).unwrap();
     }
+    let batch = analysis::analyze_with_options(&targets, 0, 0, 0, true).unwrap();
+    for (result, target) in batch.iter().zip(&targets) {
+        assert_eq!(result.outcome, "verified_recovery");
+        assert!(result.checks.iter().any(|s| s == "batch_gcd_shared_prime"));
+        crypto::verify_private(target, result.private_pem.as_ref().unwrap()).unwrap();
+    }
     let report = serde_json::to_string(&results).unwrap();
     assert!(!report.contains("PRIVATE KEY"));
     assert!(!report.contains("private_pem"));
@@ -450,6 +456,80 @@ fn tiny_rsa_trial_and_fermat_have_verified_private_keys() {
         assert_eq!(result.outcome, "verified_recovery");
         assert_eq!(result.method.as_deref(), Some(method));
         crypto::verify_private(&target, result.private_pem.as_ref().unwrap()).unwrap();
+    }
+}
+
+#[test]
+fn cli_batch_gcd_finds_shared_prime() {
+    use openssl::{bn::BigNum, pkey::PKey, rsa::Rsa};
+    let dir = tempfile::tempdir().unwrap();
+    let mut files = Vec::new();
+    for (index, modulus) in [101u32 * 1009, 101u32 * 1013].into_iter().enumerate() {
+        let key = PKey::from_rsa(
+            Rsa::from_public_components(
+                BigNum::from_u32(modulus).unwrap(),
+                BigNum::from_u32(65537).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let path = dir.path().join(format!("{index}.pem"));
+        fs::write(&path, key.public_key_to_pem().unwrap()).unwrap();
+        files.push(path);
+    }
+    let result = Command::new(env!("CARGO_BIN_EXE_cert-cracker"))
+        .arg("--state")
+        .arg(dir.path().join("state"))
+        .args([
+            "audit",
+            "--batch-gcd",
+            "--trial-limit",
+            "0",
+            "--fermat-steps",
+            "0",
+        ])
+        .args(&files)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["budgets"]["batch_gcd"], true);
+    for item in report["results"].as_array().unwrap() {
+        assert_eq!(item["outcome"], "verified_recovery");
+    }
+}
+
+#[test]
+fn batch_gcd_full_modulus_result_uses_pairwise_fallback() {
+    use openssl::{bn::BigNum, pkey::PKey, rsa::Rsa};
+    let targets: Vec<_> = [101u32 * 103, 101u32 * 107, 103u32 * 107]
+        .into_iter()
+        .map(|n| {
+            let key = PKey::from_rsa(
+                Rsa::from_public_components(
+                    BigNum::from_u32(n).unwrap(),
+                    BigNum::from_u32(65537).unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            import::target_from_key(&key, "triangle").unwrap()
+        })
+        .collect();
+    let batch = analysis::analyze_with_options(&targets, 0, 0, 0, true).unwrap();
+    for (result, target) in batch.iter().zip(&targets) {
+        assert!(
+            result
+                .checks
+                .iter()
+                .any(|s| s == "batch_full_modulus_gcd_pairwise_fallback")
+        );
+        assert_eq!(result.outcome, "verified_recovery");
+        crypto::verify_private(target, result.private_pem.as_ref().unwrap()).unwrap();
     }
 }
 

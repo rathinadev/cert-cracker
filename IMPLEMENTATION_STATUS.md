@@ -1,6 +1,6 @@
 # Implementation status — 4 November 2026
 
-Version: **0.11.0 CPU development preview**.
+Version: **0.12.0 CPU development preview**.
 
 The CPU foundation from M1–M3, BSGS and experimental independent and cooperative native kangaroo modes are working. The complete PLAN.md roadmap remains in progress. Compatible external adapters remain additional M4 work.
 
@@ -22,7 +22,7 @@ The CPU foundation from M1–M3, BSGS and experimental independent and cooperati
 - SQLite 3.54.1 with synchronous FULL transactions, schema migration, coordinator locking and per-work-unit generation/cursor validation.
 - Crash recovery, changed worker count on resume, exact gap-aware coverage and duplicate-plan reuse.
 - Independent EC candidate recomputation before durable discovery storage.
-- Bounded RSA shared-prime, Wiener, trial, Fermat and opt-in single-base Pollard p-1 stage-1 checks, private reconstruction and modular/signature verification as applicable.
+- Bounded RSA pairwise/opt-in batch-GCD shared-prime, Wiener, trial, Fermat and opt-in single-base Pollard p-1 stage-1 checks, private reconstruction and modular/signature verification as applicable.
 - Persisted audit history, public reports, verified private-key export to a new file.
 - Opt-in scrypt/AES-256-GCM encryption for new finding key blobs, requiring an unlocked vault before searches. Existing findings are not migrated; password rotation is transactional.
 - Stopped-state SQLite and artifact backup with completion marker, integrity check, referenced BSGS checksums and resume tests.
@@ -35,7 +35,7 @@ The CPU foundation from M1–M3, BSGS and experimental independent and cooperati
 
 - `cargo fmt --all -- --check`: passed.
 - `cargo clippy --all-targets --locked -- -D warnings`: passed.
-- `cargo test --locked`: **60 tests passed** (8 unit tests, 52 integration tests).
+- `cargo test --locked`: **63 tests passed** (9 unit tests, 54 integration tests).
 - Actual SIGKILL of a child search followed by resume with a different worker count: passed; final coverage was exactly the configured range.
 - Actual SIGKILL during BSGS table construction and giant searching: passed, including changed worker counts and ready-table reuse.
 - Differential sequential/BSGS results on four curves, infinity entries, partial final blocks, subgroup-boundary exclusions and large offsets: passed.
@@ -85,7 +85,7 @@ Machine: macOS ARM64, 10 logical CPUs. OpenSSL 3.6.4; SQLite 3.54.1; optimized R
 ## Remaining roadmap
 
 - Compatible external-engine adapters.
-- Batch-GCD trees and advanced RSA factorization adapters.
+- Advanced RSA factorization adapters and broader batch-GCD scaling validation.
 - Broader signature nonce-bias analysis and explicit EdDSA seed hypotheses.
 - GPU kernels and actual hardware validation.
 - Dashboard and authenticated live-control service.

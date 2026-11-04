@@ -3,7 +3,7 @@ use crate::{
     import::public_key,
     model::Target,
 };
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use num_bigint::{BigInt, BigUint, ToBigInt};
 use num_integer::Integer;
 use num_traits::{One, Zero};
@@ -12,6 +12,7 @@ use openssl::{
     rsa::Rsa,
 };
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Serialize)]
 pub struct Analysis {
@@ -231,6 +232,66 @@ pub fn analyze_with_p_minus_one(
     fermat_steps: u64,
     p_minus_one_bound: u32,
 ) -> Result<Vec<Analysis>> {
+    analyze_with_options(targets, trial_limit, fermat_steps, p_minus_one_bound, false)
+}
+
+/// Compute gcd(n, product(other unique moduli)) with product/remainder trees.
+fn batch_shared_factors(moduli: &[BigUint]) -> Result<BTreeMap<BigUint, BigUint>> {
+    let mut unique = moduli.to_vec();
+    unique.sort();
+    unique.dedup();
+    if unique.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    ensure!(
+        unique.iter().all(|n| *n > BigUint::one()),
+        "batch GCD requires moduli greater than one"
+    );
+    let bits = unique.iter().try_fold(0u64, |sum, n| {
+        sum.checked_add(n.bits()).context("batch GCD size overflow")
+    })?;
+    ensure!(
+        bits <= 1_048_576,
+        "batch GCD unique modulus total exceeds 1048576 bits"
+    );
+    let mut tree = vec![unique];
+    while tree.last().unwrap().len() > 1 {
+        let next = tree
+            .last()
+            .unwrap()
+            .chunks(2)
+            .map(|pair| {
+                if pair.len() == 2 {
+                    &pair[0] * &pair[1]
+                } else {
+                    pair[0].clone()
+                }
+            })
+            .collect();
+        tree.push(next);
+    }
+    let mut remainders = tree.last().unwrap().clone();
+    for level in (0..tree.len() - 1).rev() {
+        remainders = tree[level]
+            .iter()
+            .enumerate()
+            .map(|(i, n)| &remainders[i / 2] % (n * n))
+            .collect();
+    }
+    Ok(tree[0]
+        .iter()
+        .zip(remainders)
+        .map(|(n, r)| (n.clone(), n.gcd(&(r / n))))
+        .collect())
+}
+
+pub fn analyze_with_options(
+    targets: &[Target],
+    trial_limit: u64,
+    fermat_steps: u64,
+    p_minus_one_bound: u32,
+    batch_gcd: bool,
+) -> Result<Vec<Analysis>> {
     ensure!(
         trial_limit <= 1_000_000 && fermat_steps <= 1_000_000,
         "audit budgets must be <=1000000; use a specialized engine for larger jobs"
@@ -256,6 +317,19 @@ pub fn analyze_with_p_minus_one(
             rsa.push((t.id.clone(), biguint(r.n()), biguint(r.e())));
         }
     }
+    let shared = if batch_gcd {
+        Some(batch_shared_factors(
+            &rsa.iter().map(|(_, n, _)| n.clone()).collect::<Vec<_>>(),
+        )?)
+    } else {
+        None
+    };
+    let mut modulus_signers = BTreeMap::<&BigUint, std::collections::BTreeSet<&str>>::new();
+    if batch_gcd {
+        for (id, n, _) in &rsa {
+            modulus_signers.entry(n).or_default().insert(id);
+        }
+    }
     let mut result = vec![];
     for t in targets {
         let Some((_, n, e)) = rsa.iter().find(|r| r.0 == t.id) else {
@@ -270,23 +344,44 @@ pub fn analyze_with_p_minus_one(
             });
             continue;
         };
-        let mut checks = vec!["pairwise_shared_prime".to_owned()];
+        let mut checks = vec![
+            if batch_gcd {
+                "batch_gcd_shared_prime"
+            } else {
+                "pairwise_shared_prime"
+            }
+            .to_owned(),
+        ];
         let mut candidate = None;
-        for (id, other, _) in &rsa {
-            if *id == t.id {
-                continue;
+        if let Some(shared) = &shared {
+            let g = &shared[n];
+            if g > &BigUint::one() && g < n {
+                candidate = Some(("shared_prime", g.clone(), n / g));
             }
-            if n == other {
+            if *g == *n {
+                checks.push("batch_full_modulus_gcd_pairwise_fallback".into());
+            }
+            if modulus_signers[n].len() > 1 {
                 checks.push("shared_modulus_requires_additional_evidence".into());
-                continue;
             }
-            let g = n.gcd(other);
-            if g == *n {
-                checks.push("full_modulus_gcd_requires_further_factor_analysis".into());
-            }
-            if g > BigUint::one() && g < *n {
-                candidate = Some(("shared_prime", g.clone(), n / &g));
-                break;
+        }
+        if shared.is_none() || shared.as_ref().is_some_and(|v| v[n] == *n) {
+            for (id, other, _) in &rsa {
+                if *id == t.id {
+                    continue;
+                }
+                if n == other {
+                    checks.push("shared_modulus_requires_additional_evidence".into());
+                    continue;
+                }
+                let g = n.gcd(other);
+                if g == *n {
+                    checks.push("full_modulus_gcd_requires_further_factor_analysis".into());
+                }
+                if g > BigUint::one() && g < *n {
+                    candidate = Some(("shared_prime", g.clone(), n / &g));
+                    break;
+                }
             }
         }
         if candidate.is_none() {
@@ -336,6 +431,27 @@ pub fn analyze_with_p_minus_one(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn batch_tree_matches_pairwise_products_and_deduplicates() {
+        let moduli: Vec<BigUint> = [15u32, 21, 35, 77, 143, 15, 221]
+            .into_iter()
+            .map(BigUint::from)
+            .collect();
+        let got = batch_shared_factors(&moduli).unwrap();
+        for n in got.keys() {
+            let product = got
+                .keys()
+                .filter(|other| *other != n)
+                .fold(BigUint::one(), |p, other| p * other);
+            assert_eq!(got[n], n.gcd(&product));
+        }
+        assert_eq!(got[&BigUint::from(15u8)], BigUint::from(15u8));
+        assert_eq!(
+            batch_shared_factors(&[15u8.into(), 15u8.into()]).unwrap()[&15u8.into()],
+            BigUint::one()
+        );
+        assert!(batch_shared_factors(&[0u8.into()]).is_err());
+    }
     #[test]
     fn bounded_fermat_and_wiener() {
         assert_eq!(

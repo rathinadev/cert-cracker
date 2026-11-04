@@ -2,7 +2,7 @@
 
 A local Rust CLI for public-key inspection and bounded weak-key recovery, with native OpenSSL mathematics, multicore ECC workers, and durable SQLite checkpoints.
 
-Version **0.11.0** adds password rotation to the optional encrypted findings vault. The CPU development preview also includes bounded EC and RSA analysis, cooperative kangaroo, local calibration, and backups; see [PLAN.md](PLAN.md) for the remaining roadmap.
+Version **0.12.0** adds an opt-in batch-GCD RSA audit. The CPU development preview also includes bounded EC and RSA analysis, cooperative kangaroo, local calibration, and backups; see [PLAN.md](PLAN.md) for the remaining roadmap.
 
 ## Implemented
 
@@ -163,7 +163,7 @@ The memory budget reserves active maps, checkpoint copies and, in cooperative mo
 ./dist/cert-cracker findings
 ```
 
-With no file arguments, `audit` uses imported targets. Shared-prime analysis is a bounded reference pairwise implementation, limited to 4096 unique targets. Trial and Fermat budgets are each capped at one million. Identical moduli are not incorrectly treated as recovered factors. Full-modulus GCD and unsupported reconstruction cases remain explicit.
+With no file arguments, `audit` uses imported targets. Shared-prime analysis defaults to a bounded pairwise implementation, limited to 4096 targets. Use `--batch-gcd` to select a product/remainder tree over unique moduli, with a limit of 1,048,576 total unique modulus bits. Full-modulus batch results trigger a pairwise fallback. Trial and Fermat budgets are each capped at one million. Identical moduli are not incorrectly treated as recovered factors. Full-modulus GCD and unsupported reconstruction cases remain explicit.
 
 Enable the single-base stage-1 Pollard p-1 check explicitly with `--p-minus-one-bound 10000` (allowed range 2–100000; at most 256 targets). It is disabled by default. It can find some factors with suitably smooth factor-minus-one orders; it does not implement stage 2, and a full-modulus GCD or negative result is inconclusive.
 
@@ -254,6 +254,6 @@ The expanded suite has **46 tests**, including differential results on four curv
 
 ## Not yet implemented
 
-External kangaroo adapters, GPU kernels, nonce-bias analysis, EdDSA seed recovery, batch-GCD trees, ECM/NFS adapters, a dashboard, distributed workers, encrypted storage for all database contents, and full certificate-chain trust validation are not included. Inspection support for a key family does not imply a recovery engine for it. Use `capabilities` for the current executable's declared scope.
+External kangaroo adapters, GPU kernels, nonce-bias analysis, EdDSA seed recovery, ECM/NFS adapters, a dashboard, distributed workers, encrypted storage for all database contents, and full certificate-chain trust validation are not included. Inspection support for a key family does not imply a recovery engine for it. Use `capabilities` for the current executable's declared scope.
 
 The full roadmap and milestone acceptance criteria remain in [PLAN.md](PLAN.md).
