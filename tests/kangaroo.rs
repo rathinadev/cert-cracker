@@ -756,6 +756,7 @@ fn killed_walk(phase: &str, cooperative: bool) {
     let input = dir.path().join("cert.pem");
     fs::write(&input, certificate).unwrap();
     let state = dir.path().join("state");
+    let stderr_path = dir.path().join("child-stderr.txt");
     let bin = env!("CARGO_BIN_EXE_cert-cracker");
     let mut command = Command::new(bin);
     command
@@ -787,7 +788,7 @@ fn killed_walk(phase: &str, cooperative: bool) {
             "--quiet",
         ])
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(Stdio::from(fs::File::create(&stderr_path).unwrap()));
     if cooperative {
         command.arg("--kangaroo-cooperative");
     }
@@ -818,7 +819,12 @@ fn killed_walk(phase: &str, cooperative: bool) {
     }
     let _ = child.kill();
     child.wait().unwrap();
-    let observed = observed.expect("never observed requested durable walk phase");
+    let observed = observed.unwrap_or_else(|| {
+        panic!(
+            "never observed requested durable walk phase; child stderr: {}",
+            fs::read_to_string(&stderr_path).unwrap_or_default()
+        )
+    });
     let output = Command::new(bin)
         .arg("--state")
         .arg(&state)

@@ -203,4 +203,80 @@ fn cli_vault_init_search_and_export_require_password_file() {
         String::from_utf8_lossy(&export.stderr)
     );
     assert!(out.is_file());
+    let next = root.path().join("next-password");
+    fs::write(&next, b"new strong cli password").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&next, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let rotated = Command::new(bin)
+        .arg("--state")
+        .arg(&state)
+        .arg("--vault-password-file")
+        .arg(&pass)
+        .arg("vault-rotate")
+        .arg("--new-password-file")
+        .arg(&next)
+        .output()
+        .unwrap();
+    assert!(
+        rotated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rotated.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&rotated.stdout).unwrap();
+    assert_eq!(report["findings_reencrypted"], 1);
+}
+
+#[test]
+fn password_rotation_is_atomic_and_preserves_findings() {
+    let root = tempfile::tempdir().unwrap();
+    let (target, pem) = target();
+    let mut store = Store::open(root.path(), true).unwrap();
+    store.import(target.clone()).unwrap();
+    store.initialize_vault(PASSWORD).unwrap();
+    let a = store.record_recovery(&target, None, "first", &pem).unwrap();
+    let b = store
+        .record_recovery(&target, None, "second", &pem)
+        .unwrap();
+    let get = |store: &Store, id: i64| -> Vec<u8> {
+        store
+            .conn
+            .query_row("SELECT private_pem FROM findings WHERE id=?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap()
+    };
+    let first = get(&store, a);
+    let second = get(&store, b);
+    let mut damaged = second.clone();
+    damaged[0] ^= 1;
+    store
+        .conn
+        .execute(
+            "UPDATE findings SET private_pem=?1 WHERE id=?2",
+            rusqlite::params![damaged, b],
+        )
+        .unwrap();
+    let new_password = b"a different strong test password";
+    assert!(store.rotate_vault_password(new_password).is_err());
+    assert_eq!(get(&store, a), first);
+    store.unlock_vault(PASSWORD).unwrap();
+    store
+        .conn
+        .execute(
+            "UPDATE findings SET private_pem=?1 WHERE id=?2",
+            rusqlite::params![second, b],
+        )
+        .unwrap();
+    assert_eq!(store.rotate_vault_password(new_password).unwrap(), 2);
+    assert_ne!(get(&store, a), first);
+    drop(store);
+    let mut store = Store::open(root.path(), true).unwrap();
+    assert!(store.unlock_vault(PASSWORD).is_err());
+    store.unlock_vault(new_password).unwrap();
+    let path = root.path().join("rotated.pem");
+    store.export_key(a, &path).unwrap();
+    crypto::verify_private(&target, &fs::read(path).unwrap()).unwrap();
 }

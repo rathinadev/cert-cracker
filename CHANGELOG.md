@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.11.0 — 4 November 2026
+
+- Add atomic vault password rotation, with authenticated re-encryption of existing findings and rollback on damaged ciphertext.
+
 ## 0.10.0 — 4 November 2026
 
 - Add an optional password-unlocked vault for new findings using scrypt and AES-256-GCM. Vault initialization refuses states with existing findings, and locked searches stop before progress.

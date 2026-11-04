@@ -2,7 +2,7 @@
 
 A local Rust CLI for public-key inspection and bounded weak-key recovery, with native OpenSSL mathematics, multicore ECC workers, and durable SQLite checkpoints.
 
-Version **0.10.0** adds an optional encrypted findings vault. The CPU development preview also includes bounded EC and RSA analysis, cooperative kangaroo, local calibration, and backups; see [PLAN.md](PLAN.md) for the remaining roadmap.
+Version **0.11.0** adds password rotation to the optional encrypted findings vault. The CPU development preview also includes bounded EC and RSA analysis, cooperative kangaroo, local calibration, and backups; see [PLAN.md](PLAN.md) for the remaining roadmap.
 
 ## Implemented
 
@@ -211,9 +211,11 @@ Vault setup is optional and requires a state with **no existing findings**. It n
   --input ./lab/certificate.pem --end 1000000 --method auto
 ./dist/cert-cracker --state ./state --vault-password-file ./password-file \
   export-key FINDING_ID --output ./recovered.pem
+./dist/cert-cracker --state ./state --vault-password-file ./password-file \
+  vault-rotate --new-password-file ./new-password-file
 ```
 
-The vault derives a key with scrypt (N=32768, r=8, p=1) and encrypts each private-key blob with AES-256-GCM and a fresh random nonce. Finding identity and target are authenticated. Searches require an unlocked vault before work begins; listing and status remain available without it. The password file itself, exported keys, other database content, and artifacts remain unencrypted. Backups preserve encrypted blobs but do not include the password file. Earlier plaintext databases, WAL files and backups are not erased or converted. This development-preview implementation has not undergone an independent security audit.
+The vault derives a key with scrypt (N=32768, r=8, p=1) and encrypts each private-key blob with AES-256-GCM and a fresh random nonce. Finding identity and target are authenticated. Searches require an unlocked vault before work begins; listing and status remain available without it. The password file itself, exported keys, other database content, and artifacts remain unencrypted. Rotation re-encrypts all finding blobs in one transaction, rolling back if any blob fails authentication. Old ciphertext can remain in WAL files, free pages, snapshots, or backups; rotation does not revoke access to those copies, and backups retain their original password. Backups do not include password files. Earlier plaintext databases, WAL files and backups are not erased or converted. This development-preview implementation has not undergone an independent security audit.
 
 ## Backup and restore
 

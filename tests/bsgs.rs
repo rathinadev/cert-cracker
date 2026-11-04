@@ -171,7 +171,20 @@ fn table_sizes_one_and_whole_interval_and_large_scalar() {
     }
     let dir = tempfile::tempdir().unwrap();
     let start = BigUint::from(1u8) << 200usize;
-    let mut store = Store::open(dir.path(), true).unwrap();
+    // A concurrently spawning child may briefly inherit the old lock before exec.
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    let mut store = loop {
+        match Store::open(dir.path(), true) {
+            Ok(store) => break store,
+            Err(error)
+                if error.to_string().contains("another coordinator")
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(5))
+            }
+            Err(error) => panic!("could not reopen migrated state: {error:#}"),
+        }
+    };
     let id = store.import(target("P-521", &start + 102u8)).unwrap();
     let job = make(
         &store,
@@ -341,7 +354,19 @@ fn legacy_sequential_hash_and_v2_database_migrate() {
             )
             .unwrap();
     }
-    let mut store = Store::open(dir.path(), true).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    let mut store = loop {
+        match Store::open(dir.path(), true) {
+            Ok(store) => break store,
+            Err(error)
+                if error.to_string().contains("another coordinator")
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(5))
+            }
+            Err(error) => panic!("could not reopen migrated state: {error:#}"),
+        }
+    };
     assert_eq!(
         serde_json::to_string(&store.spec(job).unwrap()).unwrap(),
         old

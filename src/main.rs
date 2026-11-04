@@ -40,6 +40,11 @@ struct Cli {
 enum Command {
     /// Enable encrypted findings in a state with no existing findings.
     VaultInit,
+    /// Atomically re-encrypt findings under a new password.
+    VaultRotate {
+        #[arg(long)]
+        new_password_file: PathBuf,
+    },
     /// Show actual compiled capabilities; unavailable engines remain explicit.
     Capabilities,
     /// Show backend/toolchain and available logical CPU information.
@@ -434,6 +439,18 @@ fn main_result() -> Result<()> {
             store.initialize_vault(&password)?;
             emit(
                 &json!({"vault":"enabled","note":"Keep the password safe. Existing findings are not migrated; losing the password prevents key export."}),
+            )
+        }
+        Command::VaultRotate { new_password_file } => {
+            ensure!(
+                password_file.is_some(),
+                "vault-rotate requires --vault-password-file for the current password"
+            );
+            let mut store = open_store(&cli.state, true, password_file)?;
+            let password = vault_password(&new_password_file)?;
+            let count = store.rotate_vault_password(&password)?;
+            emit(
+                &json!({"vault":"password_rotated","findings_reencrypted":count,"note":"Existing backups retain their previous password."}),
             )
         }
         Command::Capabilities => emit(&json!({"version":env!("CARGO_PKG_VERSION"),"engines":[

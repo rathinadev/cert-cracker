@@ -116,6 +116,51 @@ impl Store {
         Ok(())
     }
 
+    /// Re-encrypt every finding and replace the verifier atomically.
+    pub fn rotate_vault_password(&mut self, password: &[u8]) -> Result<u64> {
+        ensure!(self.vault_enabled()?, "vault is not enabled for this state");
+        self.ensure_vault_unlocked()?;
+        let salt = crate::vault::random_salt()?;
+        let new_key = crate::vault::derive(password, &salt)?;
+        let verifier = crate::vault::seal(
+            &new_key[..],
+            crate::vault::CHECK_AAD,
+            crate::vault::CHECK_VALUE,
+        )?;
+        let old_key = self.vault_key.as_ref().context("vault is locked")?;
+        let tx = self.conn.transaction()?;
+        let mut cursor: Option<i64> = None;
+        let mut count = 0u64;
+        loop {
+            let row: Option<(i64, String, Vec<u8>)> = tx.query_row(
+                "SELECT id,target_id,private_pem FROM findings WHERE (?1 IS NULL OR id>?1) ORDER BY id LIMIT 1",
+                [cursor], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)),
+            ).optional()?;
+            let Some((id, target, encrypted)) = row else {
+                break;
+            };
+            let aad = crate::vault::finding_aad(id, &target);
+            let plaintext =
+                crate::vault::open(&old_key[..], &aad, &encrypted).with_context(|| {
+                    format!("finding {id} could not be authenticated; rotation rolled back")
+                })?;
+            let replacement = crate::vault::seal(&new_key[..], &aad, &plaintext)?;
+            tx.execute(
+                "UPDATE findings SET private_pem=?2 WHERE id=?1",
+                params![id, replacement],
+            )?;
+            cursor = Some(id);
+            count = count.checked_add(1).context("finding count overflow")?;
+        }
+        tx.execute(
+            "UPDATE vault_config SET salt=?1,verifier=?2 WHERE id=1",
+            params![salt.as_slice(), verifier],
+        )?;
+        tx.commit()?;
+        self.vault_key = Some(new_key);
+        Ok(count)
+    }
+
     pub fn open(dir: &Path, write: bool) -> Result<Self> {
         ensure!(
             rusqlite::version_number() >= 3_051_003,
