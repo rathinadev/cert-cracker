@@ -8,14 +8,17 @@ use cert_cracker::{
 use num_bigint::BigUint;
 use openssl::pkey::PKey;
 use serde_json::{Value, json};
+#[cfg(unix)]
+use std::process::Stdio;
 use std::{
     fs,
     process::Command,
-    sync::{Arc, atomic::AtomicBool},
-    time::Duration,
+    sync::{
+        Arc, Barrier,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant},
 };
-#[cfg(unix)]
-use std::{process::Stdio, time::Instant};
 
 fn target(curve: &str, scalar: BigUint) -> Target {
     let private = crypto::lab_key(curve, &scalar).unwrap();
@@ -234,11 +237,42 @@ fn pause_and_changed_worker_resume_preserve_exact_walk_results() {
         let job = store.create_job(&spec).unwrap();
         if pause {
             let mut opts = options(1);
-            opts.time_limit = Some(Duration::from_millis(15));
-            assert_eq!(
-                search::run(&mut store, job, opts).unwrap()["status"],
-                "paused"
+            // Slow filesystem/crypto setup can consume a short time limit before any
+            // work starts. Synchronize cancellation with an observed FULL checkpoint.
+            let cancel = opts.cancel.clone();
+            let monitor_cancel = cancel.clone();
+            let ready = Arc::new(Barrier::new(2));
+            let monitor_ready = ready.clone();
+            let path = dir.path().to_owned();
+            let monitor = std::thread::spawn(move || {
+                monitor_ready.wait();
+                let started = Instant::now();
+                while !monitor_cancel.load(Ordering::Relaxed) {
+                    if let Ok(reader) = Store::open(&path, false)
+                        && let Ok(report) = reader.report(job)
+                        && let Some(steps) = report["walk_steps_completed"].as_str()
+                        && number(steps).unwrap() > 0u8.into()
+                    {
+                        monitor_cancel.store(true, Ordering::Relaxed);
+                        return true;
+                    }
+                    if started.elapsed() >= Duration::from_secs(30) {
+                        monitor_cancel.store(true, Ordering::Relaxed);
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                false
+            });
+            opts.time_limit = Some(Duration::from_secs(30));
+            ready.wait();
+            let paused = search::run(&mut store, job, opts);
+            cancel.store(true, Ordering::Relaxed);
+            assert!(
+                monitor.join().unwrap(),
+                "no durable walk progress observed before cancellation"
             );
+            assert_eq!(paused.unwrap()["status"], "paused");
             assert!(
                 number(
                     store.report(job).unwrap()["walk_steps_completed"]
