@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.0 — 4 November 2026
+
+- Add optional local throughput calibration and advisory estimates for sequential, BSGS and independent/cooperative kangaroo budgets. Profiles validate their recorded environment and resources.
+- Preserve the existing kangaroo planning capacity field alongside the more explicit per-kind field.
+
 ## 0.4.0 — 4 November 2026
 
 - Add opt-in cooperative kangaroo attempts with a shared point-dependent walk and bounded cross-attempt collision index.

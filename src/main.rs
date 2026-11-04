@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, ensure};
 use cert_cracker::{
-    analysis, crypto, import,
+    analysis, calibration, crypto, import,
     model::{Target, number},
     planner::{self, KangarooOptions, PlanOptions},
     search::{self, RunOptions},
@@ -52,6 +52,21 @@ enum Command {
     Plan(PlanArgs),
     /// Estimate method, work and table memory without creating persistent state.
     Estimate(EstimateArgs),
+    /// Measure local scheduler throughput for advisory estimates.
+    Calibrate {
+        #[arg(long, default_value = "P-256")]
+        curve: String,
+        #[arg(long, default_value_t = 100000)]
+        candidates: u64,
+        #[arg(long, default_value_t = default_workers())]
+        workers: usize,
+        #[arg(long, default_value_t = 256)]
+        memory_mib: u64,
+        #[arg(long, default_value_t = 3)]
+        repetitions: u32,
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Execute an existing job, or continue its last committed progress.
     Run(RunArgs),
     /// Resume a paused/interrupted job, including after SIGKILL or restart.
@@ -198,6 +213,8 @@ struct EstimateArgs {
     chunk_size: u64,
     #[arg(long,default_value_t=default_workers())]
     workers: usize,
+    #[arg(long)]
+    calibration: Option<PathBuf>,
     #[command(flatten)]
     algorithm: AlgorithmArgs,
 }
@@ -414,7 +431,7 @@ fn main_result() -> Result<()> {
         Command::Estimate(args) => {
             let targets = import::load(&args.input)?;
             ensure!(targets.len() == 1, "estimate requires one unique key");
-            let (spec, estimate) = planner::plan(
+            let (spec, mut estimate) = planner::plan(
                 &targets[0],
                 PlanOptions {
                     start: &args.start,
@@ -427,7 +444,36 @@ fn main_result() -> Result<()> {
                     workers: args.workers,
                 },
             )?;
+            if let Some(path) = args.calibration {
+                let profile = calibration::Profile::load(&path)?;
+                let measured = profile.estimate(
+                    &targets[0],
+                    &spec,
+                    &estimate,
+                    args.workers,
+                    args.algorithm.memory_mib,
+                )?;
+                estimate["calibration"] = measured;
+            }
             emit(&json!({"spec":spec,"planning":estimate,"persistent_state_created":false}))
+        }
+        Command::Calibrate {
+            curve,
+            candidates,
+            workers,
+            memory_mib,
+            repetitions,
+            output,
+        } => {
+            use std::io::Write;
+            eprintln!("Calibrating four engines with {repetitions} sample(s) each...");
+            let profile =
+                calibration::calibrate(&curve, candidates, workers, memory_mib, repetitions)?;
+            let mut file = private_file(&output)?;
+            serde_json::to_writer_pretty(&mut file, &profile)?;
+            writeln!(file)?;
+            file.sync_all()?;
+            emit(&json!({"saved":output,"profile":profile}))
         }
         Command::Run(args) | Command::Resume(args) => run(
             &mut Store::open(&cli.state, true)?,

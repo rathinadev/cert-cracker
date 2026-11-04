@@ -2,7 +2,7 @@
 
 A local Rust CLI for public-key inspection and bounded weak-key recovery, with native OpenSSL mathematics, multicore ECC workers, and durable SQLite checkpoints.
 
-Version **0.4.0** adds experimental cooperative kangaroo to the sequential, BSGS and independent kangaroo CPU engines in [PLAN.md](PLAN.md). It is a development preview, not the complete roadmap or a claim that modern cryptography can generally be cracked.
+Version **0.5.0** adds optional locally calibrated estimates and experimental cooperative kangaroo to the sequential, BSGS and independent kangaroo CPU engines in [PLAN.md](PLAN.md). It is a development preview, not the complete roadmap or a claim that modern cryptography can generally be cracked.
 
 ## Implemented
 
@@ -115,9 +115,22 @@ BSGS tests blocks algebraically using a baby-step table and giant-step lookups. 
 
 `--memory-mib` budgets the resident table, index-validation bitmap and reserved worker buffers. It is **not a total process RSS cap**: runtime, allocator and native-library baseline allocations are additional. Raising the worker count on resume can exceed the existing job budget and is rejected before running; reduce workers or create a new plan with a larger budget. The planner reports memory and peak artifact-space estimates. Actual free space is checked before continuing table construction.
 
-The planner uses an operation-cost heuristic, not a calibrated time forecast. BSGS work chunks may be smaller than `--chunk-size` to expose enough parallel work. Planning with different parameters can therefore produce a different immutable job; use `resume JOB_ID` to continue an existing one.
+Automatic method selection uses an operation-cost heuristic; optional calibration provides advisory timing comparisons without changing the selected method. BSGS work chunks may be smaller than `--chunk-size` to expose enough parallel work. Planning with different parameters can therefore produce a different immutable job; use `resume JOB_ID` to continue an existing one.
 
 The baby table is built once by the coordinator; giant-step workers share the immutable ready table without cloning it. Building a table is currently sequential. Table reuse applies to the same job, not to unrelated targets or plans. [BSGS.md](docs/BSGS.md) documents the artifact and coverage contracts.
+
+## Local calibration
+
+Measure the actual scheduler using a generated, deliberately weak local fixture and temporary SQLite state:
+
+```sh
+./dist/cert-cracker calibrate --curve P-256 --workers 4 --memory-mib 32 \
+  --candidates 100000 --repetitions 3 --output ./p256-calibration.json
+./dist/cert-cracker estimate --input ./lab/certificate.pem --end 100000001 \
+  --method auto --workers 4 --memory-mib 32 --calibration ./p256-calibration.json
+```
+
+The output file must not already exist. The profile measures sequential, BSGS, independent kangaroo and cooperative kangaroo with checkpointing. Estimates require matching curve, worker count, memory budget and recorded software/environment fields. Timing is coarse linear extrapolation from a bounded sample; setup, CPU model and load, disk speed, table size and checkpoint frequency can change results. For kangaroo it estimates the configured maximum walk budget, not recovery time or success probability. Calibrated comparisons do not change automatic selection. Profile generation uses temporary state; `estimate` creates no persistent state.
 
 ## Experimental interval kangaroo
 

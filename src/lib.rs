@@ -1,5 +1,6 @@
 pub mod analysis;
 pub mod bsgs;
+pub mod calibration;
 pub mod crypto;
 pub mod import;
 pub mod kangaroo;
