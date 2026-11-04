@@ -2,7 +2,7 @@
 
 A local Rust CLI for public-key inspection and bounded weak-key recovery, with native OpenSSL mathematics, multicore ECC workers, and durable SQLite checkpoints.
 
-Version **0.6.0** adds incremental durable kangaroo point storage alongside optional locally calibrated estimates and experimental cooperative kangaroo to the sequential, BSGS and independent kangaroo CPU engines in [PLAN.md](PLAN.md). It is a development preview, not the complete roadmap or a claim that modern cryptography can generally be cracked.
+Version **0.7.0** adds an ECDSA repeated-nonce audit and incremental durable kangaroo point storage alongside optional locally calibrated estimates and experimental cooperative kangaroo to the sequential, BSGS and independent kangaroo CPU engines in [PLAN.md](PLAN.md). It is a development preview, not the complete roadmap or a claim that modern cryptography can generally be cracked.
 
 ## Implemented
 
@@ -21,6 +21,7 @@ Version **0.6.0** adds incremental durable kangaroo point storage alongside opti
 - Independently recompute a matched EC public key before persisting a verified finding.
 - Run bounded RSA shared-prime, Wiener, trial-division and Fermat checks. Reconstruct and verify supported semiprime private keys, including a signature round trip.
 - Persist RSA audit history, including completed negative checks and their budgets.
+- Verify supplied ECDSA signatures and check distinct signed digests for repeated nonce recovery.
 - Export reports without private material. Export recovered private keys only through a separate explicit command to a new file.
 - Benchmark the actual scheduler with SQLite checkpointing enabled.
 
@@ -182,6 +183,20 @@ Kangaroo reports use format 3: `coverage`, `covered_candidates` and `tested_cand
 
 `range_exhausted` means that the configured interval was tested without recovery. `no_weakness_detected_by_completed_checks` applies only to the recorded checks and budgets. Neither is a general security certificate.
 
+## ECDSA repeated-nonce audit
+
+Supply the signer's public key or certificate and a JSON file with exact digest bytes and DER signatures in hexadecimal:
+
+```json
+{"signatures": [{"digest_hex": "...", "signature_der_hex": "..."}]}
+```
+
+```sh
+./dist/cert-cracker --state ./state audit-signatures --input ./signer.pem --dataset ./signatures.json
+```
+
+Each signature must verify against that signer and digest before the audit runs. The digest must be the actual digest used during signing; the tool cannot establish which message produced it. It handles opposite-sign `s` encodings, ignores exact duplicate evidence, and independently verifies a candidate private key before storing a finding. Recovered keys are stored in the private state database and are not encrypted at rest. Input is limited to 1,024 signatures and 4 MiB; at most 4,096 eligible signature pairs are checked, with a distinct incomplete outcome if that limit is reached. A negative result does not prove nonce security.
+
 ## Storage and privacy
 
 Each state directory contains `state.sqlite`, SQLite journal sidecars when active, and an advisory coordinator lock file. Use local storage, not a network-shared live WAL database. Keep journal sidecars with the active database; use a supported SQLite backup process rather than copying only the main file during a run.
@@ -208,6 +223,6 @@ The expanded suite has **46 tests**, including differential results on four curv
 
 ## Not yet implemented
 
-External kangaroo adapters, GPU kernels, signature nonce analysis, EdDSA seed recovery, batch-GCD trees, ECM/NFS adapters, a dashboard, distributed workers, encrypted secret storage, and full certificate-chain trust validation are not included. Inspection support for a key family does not imply a recovery engine for it. Use `capabilities` for the current executable's declared scope.
+External kangaroo adapters, GPU kernels, nonce-bias analysis, EdDSA seed recovery, batch-GCD trees, ECM/NFS adapters, a dashboard, distributed workers, encrypted secret storage, and full certificate-chain trust validation are not included. Inspection support for a key family does not imply a recovery engine for it. Use `capabilities` for the current executable's declared scope.
 
 The full roadmap and milestone acceptance criteria remain in [PLAN.md](PLAN.md).

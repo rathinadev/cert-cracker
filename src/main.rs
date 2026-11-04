@@ -4,6 +4,7 @@ use cert_cracker::{
     model::{Target, number},
     planner::{self, KangarooOptions, PlanOptions},
     search::{self, RunOptions},
+    signatures,
     storage::{Store, private_file},
 };
 use clap::{Args, Parser, Subcommand};
@@ -84,6 +85,13 @@ enum Command {
         trial_limit: u64,
         #[arg(long, default_value_t = 1000)]
         fermat_steps: u64,
+    },
+    /// Verify ECDSA signatures and check for repeated nonces on distinct digests.
+    AuditSignatures {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        dataset: PathBuf,
     },
     /// List verified findings without private material.
     Findings,
@@ -372,9 +380,10 @@ fn main_result() -> Result<()> {
             {"id":"ec-sequential","status":"implemented","hardware":"multicore CPU","checkpoint":"exact per-unit next candidate; uncommitted tails replay","curves":"named EC groups available through OpenSSL; release tests cover P-256/P-384/P-521/secp256k1","methods":["incremental point addition","independent scalar-multiplication verification"]},
             {"id":"ec-bsgs","status":"implemented","hardware":"multicore CPU with one shared immutable table","curves":["P-256","P-384","P-521","secp256k1"],"checkpoint":"durable baby-step ledger, checksummed ready table, exact giant-step cursors","memory_limit":"table/workspace budget; runtime baseline RSS excluded"},
             {"id":"ec-kangaroo","status":"experimental","hardware":"multicore CPU; independent or cooperative logical attempts","curves":["P-256","P-384","P-521","secp256k1"],"checkpoint":"atomic checksummed walk positions, distances, steps and distinguished-point maps; worker count can change","coverage":"probabilistic budgets only; no exhaustive scalar coverage","memory_limit":"active maps, shared collision index and checkpoint workspace; runtime/native baseline RSS and SQLite cache excluded"},
+            {"id":"ecdsa-signature-audit","status":"implemented","methods":["verified repeated nonce for one signer"],"limits":{"signatures":1024,"candidate_pairs":4096},"checkpoint":"bounded audit reruns"},
             {"id":"rsa-audit","status":"implemented","methods":["pairwise shared-prime GCD","Wiener","bounded trial division","bounded Fermat"],"limits":{"targets":4096,"max_trial_limit":1000000,"max_fermat_iterations":1000000},"checkpoint":"short bounded audit reruns; no resumable factorization engine"}],
             "inspection":["EC","RSA","RSA-PSS","DSA","Ed25519","Ed448","DH","X25519","X448","other backend-supported public keys"],
-            "not_implemented":["external kangaroo adapter","GPU kernels","signature nonce recovery","EdDSA seed recovery","ECM/NFS adapters","distributed workers","dashboard","encrypted secret vault","certificate chain trust validation"],
+            "not_implemented":["external kangaroo adapter","GPU kernels","EdDSA seed recovery","ECM/NFS adapters","distributed workers","dashboard","encrypted secret vault","certificate chain trust validation"],
             "secret_storage":"private state files; not encrypted"})),
         Command::Doctor => emit(
             &json!({"version":env!("CARGO_PKG_VERSION"),"openssl":openssl::version::version(),"sqlite":rusqlite::version(),"logical_cpus":std::thread::available_parallelism().map_or(1,|n|n.get()),"default_workers":default_workers(),"architecture":std::env::consts::ARCH,"os":std::env::consts::OS,"gpu_backend":null}),
@@ -559,6 +568,25 @@ fn main_result() -> Result<()> {
             let audit = store.save_audit(&report)?;
             report["audit_id"] = json!(audit);
             emit(&report)
+        }
+        Command::AuditSignatures { input, dataset } => {
+            let targets = import::load(&input)?;
+            ensure!(
+                targets.len() == 1,
+                "signature audit requires exactly one signer key"
+            );
+            let data = signatures::load(&dataset)?;
+            let mut report = signatures::audit(&targets[0], &data)?;
+            let mut store = Store::open(&cli.state, true)?;
+            store.import(targets[0].clone())?;
+            if let Some(pem) = report.private_pem.take() {
+                report.finding_id =
+                    Some(store.record_recovery(&targets[0], None, "ecdsa-repeated-nonce", &pem)?);
+            }
+            let mut result = json!({"format_version":1,"check":"ecdsa_repeated_nonce","result":report,"note":"Supplied digests are verified with the signatures and signer key; the tool cannot establish which messages produced those digests. A negative result does not establish nonce security."});
+            let audit = store.save_audit(&result)?;
+            result["audit_id"] = json!(audit);
+            emit(&result)
         }
         Command::Findings => emit(&Store::open(&cli.state, false)?.findings()?),
         Command::Audits => emit(&Store::open(&cli.state, false)?.audits()?),

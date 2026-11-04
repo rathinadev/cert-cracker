@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.0 — 4 November 2026
+
+- Add bounded ECDSA repeated-nonce audit for verified signatures on explicitly supplied digests, including flipped-s signatures and independent key verification.
+
 ## 0.6.0 — 4 November 2026
 
 - Store newly discovered kangaroo points incrementally in atomic SQLite checkpoints, with lazy conversion of schema-4 snapshots.

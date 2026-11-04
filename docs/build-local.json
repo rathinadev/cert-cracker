@@ -7,13 +7,13 @@
     "openssl": "OpenSSL 3.6.4 25 Aug 2026",
     "os": "macos",
     "sqlite": "3.54.1",
-    "version": "0.6.0"
+    "version": "0.7.0"
   },
-  "sha256": "62c6ff5324d91095fdc98315907aa1a603ab4fd628a4b1e5ab34e8e9190c8530",
+  "sha256": "be09156e1070a6306acae0745059b5a141264b67ac9f92eb35eb75cb0f85dca1",
   "dynamic_links": "cert-cracker:\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)\n\t/usr/lib/libobjc.A.dylib (compatibility version 1.0.0, current version 228.0.0)\n\t/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation (compatibility version 300.0.0, current version 5027.0.69)\n\t/usr/lib/libiconv.2.dylib (compatibility version 7.0.0, current version 7.0.0)\n",
   "external_openssl_public_key_match": true,
   "independent_curves_verified": 4,
-  "tests_passed": 49,
+  "tests_passed": 52,
   "format_check": "passed",
   "clippy": "passed"
 }

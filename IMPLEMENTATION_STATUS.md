@@ -1,6 +1,6 @@
 # Implementation status — 4 November 2026
 
-Version: **0.6.0 CPU development preview**.
+Version: **0.7.0 CPU development preview**.
 
 The CPU foundation from M1–M3, BSGS and experimental independent and cooperative native kangaroo modes are working. The complete PLAN.md roadmap remains in progress. Compatible external adapters remain additional M4 work.
 
@@ -24,6 +24,7 @@ The CPU foundation from M1–M3, BSGS and experimental independent and cooperati
 - Independent EC candidate recomputation before durable discovery storage.
 - Bounded RSA shared-prime, Wiener, trial and Fermat checks, private reconstruction and modular/signature verification as applicable.
 - Persisted audit history, public reports, verified private-key export to a new file.
+- Bounded ECDSA repeated-nonce audit over signatures verified against one signer and supplied digests, with independent recovered-key verification.
 - Laboratory fixture generation, runtime capability reporting and an end-to-end benchmark command.
 - Locked dependencies, pinned compiler, formatting/lint checks, automated tests and a CI workflow definition.
 - An optimized macOS ARM64 executable in `dist/cert-cracker`, with OpenSSL statically linked. SQLite is bundled.
@@ -32,7 +33,7 @@ The CPU foundation from M1–M3, BSGS and experimental independent and cooperati
 
 - `cargo fmt --all -- --check`: passed.
 - `cargo clippy --all-targets --locked -- -D warnings`: passed.
-- `cargo test --locked`: **49 tests passed** (5 unit tests, 44 integration tests).
+- `cargo test --locked`: **52 tests passed** (7 unit tests, 45 integration tests).
 - Actual SIGKILL of a child search followed by resume with a different worker count: passed; final coverage was exactly the configured range.
 - Actual SIGKILL during BSGS table construction and giant searching: passed, including changed worker counts and ready-table reuse.
 - Differential sequential/BSGS results on four curves, infinity entries, partial final blocks, subgroup-boundary exclusions and large offsets: passed.
@@ -83,7 +84,7 @@ Machine: macOS ARM64, 10 logical CPUs. OpenSSL 3.6.4; SQLite 3.54.1; optimized R
 
 - Compatible external-engine adapters.
 - Batch-GCD trees and advanced RSA factorization adapters.
-- Signature nonce analysis and explicit EdDSA seed hypotheses.
+- Broader signature nonce-bias analysis and explicit EdDSA seed hypotheses.
 - GPU kernels and actual hardware validation.
 - Dashboard and authenticated live-control service.
 - Distributed workers and global resource budgets.
