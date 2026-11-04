@@ -455,6 +455,11 @@ impl Store {
             );
             return Ok(());
         }
+        let target = if config.state_version == 2 {
+            Some(self.target(&spec.target_id)?)
+        } else {
+            None
+        };
         let tx = self.conn.transaction()?;
         let units: i64 = tx.query_row(
             "SELECT COUNT(*) FROM work_units WHERE job_id=?1",
@@ -466,7 +471,11 @@ impl Store {
             "missing kangaroo manifest with existing work; refusing reset"
         );
         for attempt in 0..config.attempts {
-            let mut state = initial.clone();
+            let mut state = if let Some(target) = target.as_ref() {
+                crate::kangaroo::initial_snapshot_for_attempt(target, spec, attempt)?
+            } else {
+                initial.clone()
+            };
             state.attempt = attempt;
             state.validate(spec, attempt)?;
             tx.execute("INSERT INTO work_units(job_id,start,end,next,status,generation) VALUES(?1,?2,?3,?2,'pending',0)",params![job,canonical(&attempt.into()),canonical(&(attempt+1).into())])?;
@@ -508,7 +517,9 @@ impl Store {
             .kangaroo
             .as_ref()
             .context("missing kangaroo configuration")?;
-        let max_bytes = u64::from(config.max_points) * 512 + 8192;
+        let max_bytes =
+            u64::from(config.max_points) * 512 * if config.state_version == 2 { 2 } else { 1 }
+                + 8192;
         let (record,checksum):(String,String)=self.conn.query_row("SELECT record,checksum FROM kangaroo_states WHERE job_id=?1 AND unit_id=?2 AND length(record)<=?3",params![job,unit.id,max_bytes as i64],|r|Ok((r.get(0)?,r.get(1)?))).context("missing or oversized kangaroo checkpoint")?;
         ensure!(
             crate::model::fingerprint(record.as_bytes()) == checksum,
@@ -536,8 +547,7 @@ impl Store {
         state: &crate::kangaroo::Snapshot,
         finished: bool,
     ) -> Result<()> {
-        use num_traits::ToPrimitive;
-        state.validate(spec, unit.start.to_u32().context("invalid attempt")?)?;
+        self.validate_kangaroo_update(job, unit, spec, state)?;
         let old = self
             .kangaroo_state(job, unit, spec)?
             .context("missing old walk")?;
@@ -553,6 +563,20 @@ impl Store {
                 .iter()
                 .all(|(p, d)| state.points.get(p) == Some(d)),
             "kangaroo checkpoint lost committed points"
+        );
+        ensure!(
+            old.wild_points
+                .iter()
+                .all(|(p, d)| state.wild_points.get(p) == Some(d)),
+            "kangaroo checkpoint lost committed wild points"
+        );
+        ensure!(
+            !old.table_saturated || state.table_saturated,
+            "kangaroo table saturation cannot regress"
+        );
+        ensure!(
+            !old.wild_table_saturated || state.wild_table_saturated,
+            "kangaroo wild table saturation cannot regress"
         );
         let rank = |p: &str| match p {
             "tame" => 0,
@@ -603,6 +627,27 @@ impl Store {
             params![job, now()],
         )?;
         tx.commit()?;
+        Ok(())
+    }
+
+    pub fn validate_kangaroo_update(
+        &self,
+        job: i64,
+        unit: &WorkUnit,
+        spec: &SearchSpec,
+        state: &crate::kangaroo::Snapshot,
+    ) -> Result<()> {
+        use num_traits::ToPrimitive;
+        state.validate(spec, unit.start.to_u32().context("invalid attempt")?)?;
+        let (generation, status): (i64, String) = self.conn.query_row(
+            "SELECT generation,status FROM work_units WHERE id=?1 AND job_id=?2",
+            params![unit.id, job],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        ensure!(
+            generation == unit.generation && status == "running",
+            "stale kangaroo checkpoint"
+        );
         Ok(())
     }
 

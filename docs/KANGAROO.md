@@ -1,6 +1,20 @@
 # Bounded interval kangaroo
 
-Version 0.3.0 introduces an experimental native CPU Pollard lambda engine for P-256, P-384, P-521 and secp256k1. It uses independent two-walk attempts and the existing OpenSSL point arithmetic. It is selected explicitly; automatic planning remains sequential/BSGS.
+Version 0.3.0 introduced an experimental native CPU Pollard lambda engine for P-256, P-384, P-521 and secp256k1. Version 0.4.0 adds an opt-in cooperative mode. Both use the existing OpenSSL point arithmetic and are selected explicitly; automatic planning remains sequential/BSGS. The sections below describe independent mode unless they say otherwise.
+
+## Cooperative mode
+
+Pass `--method kangaroo --kangaroo-cooperative` to enable version-2 state. All logical attempts use the same seeded, point-dependent jump function and distinguished-point predicate. Attempt `i` starts its tame and wild walkers with offset `i * max(1, floor(sqrt(b-a)/2))`, making their starting points deterministic across worker-count changes.
+
+An attempt saves bounded distinguished-point maps for both tame and wild walkers. At a checkpoint, the coordinator compares newly added points against points already committed by other attempts. For a tame point from attempt `t` and a matching wild point from attempt `w`, the candidate is `(b-1 + offset_t + dt - offset_w - dw) mod n`. It must be inside the requested interval and pass independent key verification before it is persisted.
+
+The coordinator publishes new points to its in-memory index only after the snapshot transaction commits. Workers send only new point entries for collision checking; previously committed points are not rescanned at every checkpoint. SQLite still writes the complete snapshot maps each time. If the process stops, the index is reconstructed from checksummed committed snapshots before workers resume, and any previously committed cross-attempt match is checked again. A forced termination can replay uncommitted work.
+
+Tame and wild maps each have the configured capacity per attempt. A full tame map starts that attempt's wild walk; a full wild map stops accepting new shared wild points while the walk continues. Both saturation cases appear in reports and can reduce the chance of recovery. Cooperative attempts stop at the configured per-phase addition budget; they do not use independent mode's early wild-distance bound. Different checkpoint arrival orders may change which attempt finds a match first.
+
+The shared map can detect cross-attempt collisions regardless of which point was committed first, but the implementation does not claim a guaranteed speedup or a quantified success probability. In particular, short budgets, sparse distinguished points, coalescing walks and saturated tables can reduce its benefit. The version-1 independent mode remains the default for existing and new kangaroo jobs unless the flag is specified.
+
+Three local repetitions per mode at P-256 `[1,1000001)`, an outside-range target, eight attempts and 128 points per kind per attempt produced median cooperative times of 0.730 seconds with one worker and 0.219 seconds with four workers. Independent mode measured 0.736 and 0.219 seconds respectively. Each run completed 128,000 point additions; this is a fixed-budget throughput comparison, not evidence of equal recovery probability. Raw measurements and independent OpenSSL verification on all four curves are in `cooperative-benchmark-local.json`.
 
 ## Algorithm
 
@@ -18,9 +32,9 @@ The step budget defaults to `8*ceil(sqrt(b-a))`, capped at `u64::MAX/4` addition
 
 ## Parallel execution
 
-Logical attempts have independent point partitions derived from their attempt indices. Each attempt has one tame phase followed by one wild phase. A Rayon pool executes several attempts concurrently. This implementation does not share collisions across attempts and does not claim the scaling of a cooperative kangaroo herd. Additional OS workers cannot exceed the number of logical attempts.
+In independent mode, logical attempts have separate point partitions derived from their attempt indices and do not share collisions. Each attempt has one tame phase followed by one wild phase. A Rayon pool executes several attempts concurrently in either mode. Additional OS workers cannot exceed the number of logical attempts.
 
-The immutable configuration records state format, seed, logical attempt count, additions per phase, distinguished bits, point capacity and memory budget. A resumed job retains these values and all its logical attempt indices. Only the worker count and operational checkpoint/time-limit settings may change. Worker-count changes must pass the original memory budget before lifecycle changes begin.
+The immutable configuration records state format, seed, logical attempt count, additions per phase, distinguished bits, point capacity and memory budget. Version 1 uses independent walks; version 2 uses cooperative walks. A resumed job retains these values and all its logical attempt indices. Only the worker count and operational checkpoint/time-limit settings may change. Worker-count changes must pass the original memory budget before lifecycle changes begin.
 
 ## Checkpoints and crash recovery
 
@@ -34,19 +48,19 @@ The checksum detects accidental changes and corruption. It is not authentication
 
 ## Memory and disk
 
-Planning reserves 2 MiB of base workspace plus, per active worker, 2 MiB of workspace and 4096 bytes per allowed tame entry. The entry allowance covers map nodes, serialized checkpoint buffers, handoff copies and validation overhead; it is deliberately conservative. Point capacity is 16..65536 per logical attempt. Distinguished bits are 0..40, chosen by default to keep the expected tame-map occupancy below a quarter of the cap under the hash model when possible.
+Independent-mode planning reserves 2 MiB of base workspace plus, per active worker, 2 MiB of workspace and 4096 bytes per allowed tame entry. Cooperative planning reserves 2 MiB of base workspace, 2 MiB per active worker, and `2 * (active_workers + logical_attempts) * capacity * 4096` bytes for tame/wild active maps, checkpoint copies and the shared index. The entry allowance is deliberately conservative. Point capacity is 16..65536 per kind per logical attempt. Distinguished bits are 0..40, chosen by default to keep the expected tame-map occupancy below a quarter of the cap under the hash model when possible.
 
-This is an engine working-set budget, not a hard RSS limit. Runtime, allocator/native baselines and SQLite page cache are additional. Finished/inactive maps remain on disk and are loaded only when needed. The estimator includes a maximum checkpoint JSON payload estimate; SQLite/WAL overhead and historical free pages are additional. Disk-full errors preserve the previously committed transaction. Large maps are serialized at every checkpoint, so very short checkpoint intervals can substantially reduce performance. Delta checkpoints and cooperative collision sharing remain future work.
+This is an engine working-set budget, not a hard RSS limit. Runtime, allocator/native baselines and SQLite page cache are additional. Finished/inactive maps remain on disk; cooperative mode reads their committed points to reconstruct the shared index on resume. The estimator includes a maximum checkpoint JSON payload estimate; SQLite/WAL overhead and historical free pages are additional. Disk-full errors preserve the previously committed transaction. Large maps are serialized at every checkpoint, so very short checkpoint intervals can substantially reduce performance. Incremental durable map storage remains future work.
 
 ## Reports and compatibility
 
 Kangaroo uses report format 3. `walk_steps_completed` counts committed point additions, excluding jump-table generator multiplications and verification work. `attempts_completed` and per-walk fields describe the attempt budget. `coverage`, `covered_candidates` and `tested_candidates` are null. The negative terminal status is `budget_exhausted`, with outcome `probabilistic_budget_exhausted`; this cannot exclude an in-range key. There is no exhaustive percentage, calibrated ETA or numeric success-probability claim.
 
-Sequential and BSGS reports retain format 2. The new optional specification field is omitted for earlier methods, preserving existing specification hashes. Schema 1/2/3 migrations are transactional, including preservation of old BSGS manifests/artifacts. Older executables refuse schema 4. Back up a stopped state database with its BSGS artifacts, or use SQLite's supported live backup mechanism.
+Sequential and BSGS reports retain format 2. Earlier independent kangaroo specifications and snapshots retain their version-1 serialization and hashes. Cooperative snapshots use version 2 with additional wild-point maps and saturation state, stored in the existing schema-4 tables. The 0.3 executable rejects a cooperative specification; keep the newer binary to resume those jobs. Schema 1/2/3 migrations are transactional, including preservation of old BSGS manifests/artifacts. Back up a stopped state database with its BSGS artifacts, or use SQLite's supported live backup mechanism.
 
 ## Validation and references
 
-The automated suite checks differential recovery against the sequential engine on four curves, singleton/offset/subgroup-boundary intervals, outside-range keys, deliberately insufficient budgets, saturated maps, stale generations, phase regressions, missing/corrupt/rebound checkpoints, read-only CLI estimates and resource rejections. An outside-range test compares the exact final snapshots of uninterrupted and paused/changed-worker runs. Actual child processes are killed during both tame and wild phases and then resumed with changed worker counts. A schema-3 BSGS checkpoint is migrated and resumed without changing its hash or artifact manifest.
+The automated suite checks differential recovery against the sequential engine on four curves, singleton/offset/subgroup-boundary intervals, outside-range keys, deliberately insufficient budgets, saturated maps, stale generations, phase regressions, missing/corrupt/rebound checkpoints, read-only CLI estimates and resource rejections. It checks cooperative collision arrivals in both orders and recovery of a committed cross-attempt collision after a restart. An outside-range test compares the exact final independent snapshots of uninterrupted and paused/changed-worker runs. Actual child processes are killed during both tame and wild phases in independent and cooperative modes and then resumed with changed worker counts. A schema-3 BSGS checkpoint is migrated and resumed without changing its hash or artifact manifest.
 
 Release verification independently compared exported laboratory keys with their certificate public keys through the separate OpenSSL CLI on all four curves. This included P-384 scalar 98,765,432 in `[1,100000001)`. Three local P-256 repetitions with eight attempts, a 128-point cap and `[1,1000001)` gave median end-to-end times of 0.7141 seconds with one worker and 0.1982 seconds with four workers (3.60x). This compares fixed bounded walks with an outside-range target; it is not exhaustive interval throughput. Raw evidence is in `kangaroo-benchmark-local.json`.
 

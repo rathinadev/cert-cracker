@@ -2,7 +2,7 @@
 
 A local Rust CLI for public-key inspection and bounded weak-key recovery, with native OpenSSL mathematics, multicore ECC workers, and durable SQLite checkpoints.
 
-Version **0.3.0** adds experimental, resumable interval kangaroo to the sequential/BSGS CPU engines in [PLAN.md](PLAN.md). It is a development preview, not the complete roadmap or a claim that modern cryptography can generally be cracked.
+Version **0.4.0** adds experimental cooperative kangaroo to the sequential, BSGS and independent kangaroo CPU engines in [PLAN.md](PLAN.md). It is a development preview, not the complete roadmap or a claim that modern cryptography can generally be cracked.
 
 ## Implemented
 
@@ -17,6 +17,7 @@ Version **0.3.0** adds experimental, resumable interval kangaroo to the sequenti
 - Save exact per-work-unit next-candidate cursors in SQLite transactions; resume after Ctrl+C, time limits, restart or forced termination.
 - Resume with a different worker count. Out-of-order completed chunks retain their exact coverage.
 - Run independent bounded kangaroo attempts across CPU workers, with saved walk positions, distances, seeds, operation counts and distinguished points. Probabilistic attempts never claim exhaustive coverage.
+- Optionally share distinguished tame/wild points between kangaroo attempts, with versioned checkpoints and bounded shared-index memory.
 - Independently recompute a matched EC public key before persisting a verified finding.
 - Run bounded RSA shared-prime, Wiener, trial-division and Fermat checks. Reconstruct and verify supported semiprime private keys, including a signature round trip.
 - Persist RSA audit history, including completed negative checks and their budgets.
@@ -126,17 +127,17 @@ The baby table is built once by the coordinator; giant-step workers share the im
   --end 100000001 --method kangaroo --memory-mib 32 --workers 4
 ./dist/cert-cracker --state ./state-kangaroo search \
   --input ./lab-kangaroo/certificate.pem --end 100000001 \
-  --method kangaroo --memory-mib 32 --workers 4 --kangaroo-attempts 8
+  --method kangaroo --kangaroo-cooperative --memory-mib 64 --workers 4 --kangaroo-attempts 8
 ./dist/cert-cracker --state ./state-kangaroo resume 1 --workers 2
 ```
 
-`auto` continues to select sequential or BSGS. Kangaroo requires an explicit `--method kangaroo`. Its fixed logical attempts (default 16) run independently; this is a CPU reference engine, not a cooperative or GPU herd. It supports the same four tested curves as BSGS, including large scalar offsets.
+`auto` continues to select sequential or BSGS. Kangaroo requires an explicit `--method kangaroo`. Without `--kangaroo-cooperative`, its fixed logical attempts (default 16) run independently. The cooperative option uses a shared walk function and compares distinguished points from different attempts. Both modes support the same four tested curves as BSGS, including large scalar offsets.
 
 Each attempt builds a bounded tame distinguished-point map, then follows a wild walk looking for a collision. `--kangaroo-steps` limits point additions per phase; the default is `8*ceil(sqrt(interval_width))`, capped at `u64::MAX/4`. `--kangaroo-dp-bits` sets the predicate rarity; `--kangaroo-max-points` caps the saved tame map. When the map fills, the attempt switches to wild searching with the committed points and reports saturation. These settings affect the chance of finding a key; budget exhaustion does not prove the interval empty.
 
 Checkpoints atomically save the entire map and walk state in SQLite with a specification binding, checksum and work generation. Resume preserves the same seed, partition, phase, counters and next point while allowing a different worker count within the saved memory budget. The default seed is 32 zero bytes for reproducibility; use `--kangaroo-seed` with 64 lowercase hex characters to create a different immutable search. Increasing attempt/step budgets or changing the seed creates a new job.
 
-The memory budget reserves active maps and checkpoint copies; native/runtime baseline RSS and SQLite cache are additional. Checkpoints serialize each active map, so a large map or very short interval can make checkpoint I/O expensive. See [KANGAROO.md](docs/KANGAROO.md) for the mathematics, storage contract and limits.
+The memory budget reserves active maps, checkpoint copies and, in cooperative mode, the shared index for all logical attempts; native/runtime baseline RSS and SQLite cache are additional. Cooperative attempts retain bounded tame and wild maps separately. If a wild map fills, the walk continues but further wild points are not shared; the report records saturation. Checkpoints serialize each active map in full, so a large map or very short interval can make checkpoint I/O expensive. Collision checks process only newly added points after each checkpoint. See [KANGAROO.md](docs/KANGAROO.md) for the mathematics, storage contract and limits.
 
 ## RSA analysis
 
@@ -190,10 +191,10 @@ cargo test --locked
 
 Tests cover weak-key recovery on four curves, large P-521 bounds, duplicate target normalization, stale/regressing cursors, exact gap-aware coverage, paused final chunks, corrupt specification hashes, private-file exports, RSA recovery, and an actual child process terminated with SIGKILL and resumed with a different worker count.
 
-The expanded suite has **40 tests**, including differential results on four curves, infinity and subgroup boundaries, bounded probabilistic failures, table saturation, resource limits, checkpoint corruption, torn tails, cancellation, schema migrations, and actual SIGKILL recovery during BSGS building/searching and kangaroo tame/wild walks. An outside-range kangaroo test also checks that changing worker count after a pause produces exactly the same final logical walk states.
+The expanded suite has **46 tests**, including differential results on four curves, cross-attempt collision ordering, saved-collision recovery after restart, infinity and subgroup boundaries, bounded probabilistic failures, table saturation, resource limits, checkpoint corruption, torn tails, cancellation, schema migrations, and actual SIGKILL recovery during BSGS building/searching and independent/cooperative kangaroo walks. An outside-range independent kangaroo test also checks that changing worker count after a pause produces exactly the same final logical walk states.
 
 ## Not yet implemented
 
-Cooperative kangaroo herds and external adapters, GPU kernels, signature nonce analysis, EdDSA seed recovery, batch-GCD trees, ECM/NFS adapters, a dashboard, distributed workers, encrypted secret storage, and full certificate-chain trust validation are not included. Inspection support for a key family does not imply a recovery engine for it. Use `capabilities` for the current executable's declared scope.
+External kangaroo adapters, GPU kernels, signature nonce analysis, EdDSA seed recovery, batch-GCD trees, ECM/NFS adapters, a dashboard, distributed workers, encrypted secret storage, and full certificate-chain trust validation are not included. Inspection support for a key family does not imply a recovery engine for it. Use `capabilities` for the current executable's declared scope.
 
 The full roadmap and milestone acceptance criteria remain in [PLAN.md](PLAN.md).

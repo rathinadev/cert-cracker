@@ -1,0 +1,217 @@
+{
+  "metadata": {
+    "architecture": "aarch64",
+    "default_workers": 9,
+    "gpu_backend": null,
+    "logical_cpus": 10,
+    "openssl": "OpenSSL 3.6.4 25 Aug 2026",
+    "os": "macos",
+    "sqlite": "3.54.1",
+    "version": "0.4.0"
+  },
+  "curve": "P-256",
+  "interval": "[1,1000001)",
+  "target_outside_interval": true,
+  "attempts": 8,
+  "point_capacity_per_kind_per_attempt": 128,
+  "memory_budget_mib": 32,
+  "samples": [
+    {
+      "repetition": 1,
+      "mode": "independent",
+      "covered_candidates": null,
+      "engine": "ec-kangaroo",
+      "giant_lookups": null,
+      "seconds": 0.736354959,
+      "unique_candidates": null,
+      "unique_candidates_per_second": null,
+      "walk_steps": "128000",
+      "walk_steps_per_second": 173829.20891010118,
+      "workers": 1
+    },
+    {
+      "repetition": 1,
+      "mode": "independent",
+      "covered_candidates": null,
+      "engine": "ec-kangaroo",
+      "giant_lookups": null,
+      "seconds": 0.219439583,
+      "unique_candidates": null,
+      "unique_candidates_per_second": null,
+      "walk_steps": "128000",
+      "walk_steps_per_second": 583304.0614190376,
+      "workers": 4
+    },
+    {
+      "repetition": 1,
+      "mode": "cooperative",
+      "covered_candidates": null,
+      "engine": "ec-kangaroo",
+      "giant_lookups": null,
+      "seconds": 0.735364458,
+      "unique_candidates": null,
+      "unique_candidates_per_second": null,
+      "walk_steps": "128000",
+      "walk_steps_per_second": 174063.3485987706,
+      "workers": 1
+    },
+    {
+      "repetition": 1,
+      "mode": "cooperative",
+      "covered_candidates": null,
+      "engine": "ec-kangaroo",
+      "giant_lookups": null,
+      "seconds": 0.220139209,
+      "unique_candidates": null,
+      "unique_candidates_per_second": null,
+      "walk_steps": "128000",
+      "walk_steps_per_second": 581450.2585952329,
+      "workers": 4
+    },
+    {
+      "repetition": 2,
+      "mode": "independent",
+      "covered_candidates": null,
+      "engine": "ec-kangaroo",
+      "giant_lookups": null,
+      "seconds": 0.736418125,
+      "unique_candidates": null,
+      "unique_candidates_per_second": null,
+      "walk_steps": "128000",
+      "walk_steps_per_second": 173814.2987721819,
+      "workers": 1
+    },
+    {
+      "repetition": 2,
+      "mode": "independent",
+      "covered_candidates": null,
+      "engine": "ec-kangaroo",
+      "giant_lookups": null,
+      "seconds": 0.216074875,
+      "unique_candidates": null,
+      "unique_candidates_per_second": null,
+      "walk_steps": "128000",
+      "walk_steps_per_second": 592387.245393524,
+      "workers": 4
+    },
+    {
+      "repetition": 2,
+      "mode": "cooperative",
+      "covered_candidates": null,
+      "engine": "ec-kangaroo",
+      "giant_lookups": null,
+      "seconds": 0.729857625,
+      "unique_candidates": null,
+      "unique_candidates_per_second": null,
+      "walk_steps": "128000",
+      "walk_steps_per_second": 175376.670210166,
+      "workers": 1
+    },
+    {
+      "repetition": 2,
+      "mode": "cooperative",
+      "covered_candidates": null,
+      "engine": "ec-kangaroo",
+      "giant_lookups": null,
+      "seconds": 0.219432208,
+      "unique_candidates": null,
+      "unique_candidates_per_second": null,
+      "walk_steps": "128000",
+      "walk_steps_per_second": 583323.6659588277,
+      "workers": 4
+    },
+    {
+      "repetition": 3,
+      "mode": "independent",
+      "covered_candidates": null,
+      "engine": "ec-kangaroo",
+      "giant_lookups": null,
+      "seconds": 0.735992167,
+      "unique_candidates": null,
+      "unique_candidates_per_second": null,
+      "walk_steps": "128000",
+      "walk_steps_per_second": 173914.89439588017,
+      "workers": 1
+    },
+    {
+      "repetition": 3,
+      "mode": "independent",
+      "covered_candidates": null,
+      "engine": "ec-kangaroo",
+      "giant_lookups": null,
+      "seconds": 0.218759083,
+      "unique_candidates": null,
+      "unique_candidates_per_second": null,
+      "walk_steps": "128000",
+      "walk_steps_per_second": 585118.5616827622,
+      "workers": 4
+    },
+    {
+      "repetition": 3,
+      "mode": "cooperative",
+      "covered_candidates": null,
+      "engine": "ec-kangaroo",
+      "giant_lookups": null,
+      "seconds": 0.718034792,
+      "unique_candidates": null,
+      "unique_candidates_per_second": null,
+      "walk_steps": "128000",
+      "walk_steps_per_second": 178264.34237743734,
+      "workers": 1
+    },
+    {
+      "repetition": 3,
+      "mode": "cooperative",
+      "covered_candidates": null,
+      "engine": "ec-kangaroo",
+      "giant_lookups": null,
+      "seconds": 0.199149083,
+      "unique_candidates": null,
+      "unique_candidates_per_second": null,
+      "walk_steps": "128000",
+      "walk_steps_per_second": 642734.5688556347,
+      "workers": 4
+    }
+  ],
+  "median_seconds": {
+    "independent": {
+      "1": 0.736354959,
+      "4": 0.218759083
+    },
+    "cooperative": {
+      "1": 0.729857625,
+      "4": 0.219432208
+    }
+  },
+  "independent_recoveries": [
+    {
+      "curve": "P-256",
+      "scalar": "987654",
+      "interval": "[1,1000001)",
+      "seconds": 0.06692504198872484,
+      "external_openssl_public_key_match": true
+    },
+    {
+      "curve": "P-384",
+      "scalar": "987654",
+      "interval": "[1,1000001)",
+      "seconds": 0.2482086249801796,
+      "external_openssl_public_key_match": true
+    },
+    {
+      "curve": "P-521",
+      "scalar": "987654",
+      "interval": "[1,1000001)",
+      "seconds": 0.16803654102841392,
+      "external_openssl_public_key_match": true
+    },
+    {
+      "curve": "secp256k1",
+      "scalar": "987654",
+      "interval": "[1,1000001)",
+      "seconds": 0.1380842499784194,
+      "external_openssl_public_key_match": true
+    }
+  ],
+  "note": "Laboratory measurements, including SQLite checkpoints and setup. The two modes use different walks and may execute different numbers of additions; duration is not an equivalent-success or brute-force comparison."
+}

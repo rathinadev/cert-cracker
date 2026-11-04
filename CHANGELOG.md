@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0 — 4 November 2026
+
+- Add opt-in cooperative kangaroo attempts with a shared point-dependent walk and bounded cross-attempt collision index.
+- Persist version-2 tame and wild point maps and reconstruct the collision index on resume; preserve version-1 independent jobs and their specification hashes.
+- Check newly added collision points at each checkpoint instead of rescanning the entire shared index. SQLite snapshots still contain full point maps.
+- Test both collision arrival orders, recovery from committed points after restart, four curves, resource limits and actual forced termination in both walk phases.
+
 ## 0.3.0 — 26 October 2026
 
 - Add an experimental multi-curve interval kangaroo engine with bounded independent tame/wild attempts across CPU workers.

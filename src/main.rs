@@ -165,9 +165,12 @@ struct AlgorithmArgs {
     /// Distinguished-point predicate bits, 0..40 (default chosen from capacity).
     #[arg(long)]
     kangaroo_dp_bits: Option<u8>,
-    /// Maximum saved tame points per logical attempt, 16..65536.
+    /// Maximum saved points per walk kind per attempt, 16..65536.
     #[arg(long)]
     kangaroo_max_points: Option<u32>,
+    /// Share distinguished-point collisions between logical kangaroo attempts.
+    #[arg(long)]
+    kangaroo_cooperative: bool,
 }
 
 impl AlgorithmArgs {
@@ -178,6 +181,7 @@ impl AlgorithmArgs {
             seed: self.kangaroo_seed.clone(),
             distinguished_bits: self.kangaroo_dp_bits,
             max_points: self.kangaroo_max_points,
+            cooperative: self.kangaroo_cooperative,
         }
     }
 }
@@ -350,10 +354,10 @@ fn main_result() -> Result<()> {
         Command::Capabilities => emit(&json!({"version":env!("CARGO_PKG_VERSION"),"engines":[
             {"id":"ec-sequential","status":"implemented","hardware":"multicore CPU","checkpoint":"exact per-unit next candidate; uncommitted tails replay","curves":"named EC groups available through OpenSSL; release tests cover P-256/P-384/P-521/secp256k1","methods":["incremental point addition","independent scalar-multiplication verification"]},
             {"id":"ec-bsgs","status":"implemented","hardware":"multicore CPU with one shared immutable table","curves":["P-256","P-384","P-521","secp256k1"],"checkpoint":"durable baby-step ledger, checksummed ready table, exact giant-step cursors","memory_limit":"table/workspace budget; runtime baseline RSS excluded"},
-            {"id":"ec-kangaroo","status":"experimental","hardware":"multicore CPU; independent logical two-walk attempts","curves":["P-256","P-384","P-521","secp256k1"],"checkpoint":"atomic checksummed walk positions, distances, steps and tame distinguished-point maps; worker count can change","coverage":"probabilistic budgets only; no exhaustive scalar coverage","memory_limit":"active maps and checkpoint workspace; runtime/native baseline RSS and SQLite cache excluded"},
+            {"id":"ec-kangaroo","status":"experimental","hardware":"multicore CPU; independent or cooperative logical attempts","curves":["P-256","P-384","P-521","secp256k1"],"checkpoint":"atomic checksummed walk positions, distances, steps and distinguished-point maps; worker count can change","coverage":"probabilistic budgets only; no exhaustive scalar coverage","memory_limit":"active maps, shared collision index and checkpoint workspace; runtime/native baseline RSS and SQLite cache excluded"},
             {"id":"rsa-audit","status":"implemented","methods":["pairwise shared-prime GCD","Wiener","bounded trial division","bounded Fermat"],"limits":{"targets":4096,"max_trial_limit":1000000,"max_fermat_iterations":1000000},"checkpoint":"short bounded audit reruns; no resumable factorization engine"}],
             "inspection":["EC","RSA","RSA-PSS","DSA","Ed25519","Ed448","DH","X25519","X448","other backend-supported public keys"],
-            "not_implemented":["cooperative kangaroo herds or external adapter","GPU kernels","signature nonce recovery","EdDSA seed recovery","ECM/NFS adapters","distributed workers","dashboard","encrypted secret vault","certificate chain trust validation"],
+            "not_implemented":["external kangaroo adapter","GPU kernels","signature nonce recovery","EdDSA seed recovery","ECM/NFS adapters","distributed workers","dashboard","encrypted secret vault","certificate chain trust validation"],
             "secret_storage":"private state files; not encrypted"})),
         Command::Doctor => emit(
             &json!({"version":env!("CARGO_PKG_VERSION"),"openssl":openssl::version::version(),"sqlite":rusqlite::version(),"logical_cpus":std::thread::available_parallelism().map_or(1,|n|n.get()),"default_workers":default_workers(),"architecture":std::env::consts::ARCH,"os":std::env::consts::OS,"gpu_backend":null}),

@@ -35,8 +35,12 @@ pub fn preflight(spec: &SearchSpec, workers: usize) -> Result<()> {
     }
     if let Some(c) = &spec.kangaroo {
         ensure!(
-            crate::kangaroo::memory_required(c.max_points, workers, c.attempts)
-                <= c.memory_budget_bytes,
+            crate::kangaroo::memory_required_for(
+                c.max_points,
+                workers,
+                c.attempts,
+                c.state_version == 2
+            ) <= c.memory_budget_bytes,
             "kangaroo table/workspace exceeds the job's memory budget with {workers} workers; reduce workers or create a new plan with a larger budget"
         );
     }
@@ -73,6 +77,7 @@ pub struct KangarooOptions {
     pub seed: Option<String>,
     pub distinguished_bits: Option<u8>,
     pub max_points: Option<u32>,
+    pub cooperative: bool,
 }
 
 fn plan_kangaroo(target: &Target, options: PlanOptions<'_>) -> Result<(SearchSpec, Value)> {
@@ -100,7 +105,12 @@ fn plan_kangaroo(target: &Target, options: PlanOptions<'_>) -> Result<(SearchSpe
     );
     let active = options.workers.min(attempts as usize) as u64;
     let reserved = crate::kangaroo::BASE_BYTES + active * crate::kangaroo::WORKER_BYTES;
-    let capacity = memory.saturating_sub(reserved) / active / crate::kangaroo::POINT_BYTES;
+    let maps = if k.cooperative {
+        2 * (active + u64::from(attempts))
+    } else {
+        active
+    };
+    let capacity = memory.saturating_sub(reserved) / maps / crate::kangaroo::POINT_BYTES;
     let points = k.max_points.unwrap_or(capacity.min(65536) as u32);
     ensure!(
         u64::from(points) <= capacity && points >= 16,
@@ -121,7 +131,7 @@ fn plan_kangaroo(target: &Target, options: PlanOptions<'_>) -> Result<(SearchSpe
         bits += 1;
     }
     let config = KangarooConfig {
-        state_version: 1,
+        state_version: if k.cooperative { 2 } else { 1 },
         seed: k.seed.clone().unwrap_or_else(|| "00".repeat(32)),
         attempts,
         steps_per_phase: steps,
@@ -137,7 +147,7 @@ fn plan_kangaroo(target: &Target, options: PlanOptions<'_>) -> Result<(SearchSpe
     )?;
     preflight(&spec, options.workers)?;
     let max_steps = BigUint::from(steps) * 2u8 * attempts;
-    let estimate = json!({"requested_method":"kangaroo","selected_method":"ec-kangaroo","recommendation":"explicit experimental method; automatic selection remains sequential/BSGS","interval_candidates":width.to_str_radix(10),"workers":options.workers,"logical_attempts":attempts,"active_workers":active,"steps_per_phase":steps,"maximum_walk_steps":max_steps.to_str_radix(10),"distinguished_bits":config.distinguished_bits,"point_capacity_per_attempt":points,"estimated_table_workspace_bytes":crate::kangaroo::memory_required(points,options.workers,attempts),"estimated_max_checkpoint_payload_bytes":u64::from(attempts)*(u64::from(points)*512+8192),"memory_budget_bytes":memory,"memory_scope":"active walk maps, checkpoint copies and reserved workspace; runtime/native baseline RSS and SQLite page cache are additional","estimated_seconds":null,"estimated_success_probability":null,"timing_note":"Independent bounded two-walk attempts; operation budgets are not exhaustive interval coverage. No calibrated runtime or success probability is available."});
+    let estimate = json!({"requested_method":"kangaroo","selected_method":"ec-kangaroo","recommendation":"explicit experimental method; automatic selection remains sequential/BSGS","cooperative":k.cooperative,"interval_candidates":width.to_str_radix(10),"workers":options.workers,"logical_attempts":attempts,"active_workers":active,"steps_per_phase":steps,"maximum_walk_steps":max_steps.to_str_radix(10),"distinguished_bits":config.distinguished_bits,"point_capacity_per_kind_per_attempt":points,"estimated_table_workspace_bytes":crate::kangaroo::memory_required_for(points,options.workers,attempts,k.cooperative),"estimated_max_checkpoint_payload_bytes":u64::from(attempts)*(u64::from(points)*512*if k.cooperative {2} else {1}+8192),"memory_budget_bytes":memory,"memory_scope":"active walk maps, checkpoint copies, shared collision index and reserved workspace; runtime/native baseline RSS and SQLite page cache are additional","estimated_seconds":null,"estimated_success_probability":null,"timing_note":"Bounded walks; operation budgets are not exhaustive interval coverage. No calibrated runtime or success probability is available."});
     Ok((spec, estimate))
 }
 
@@ -173,7 +183,8 @@ pub fn plan(target: &Target, options: PlanOptions<'_>) -> Result<(SearchSpec, Va
                 && k.steps_per_phase.is_none()
                 && k.seed.is_none()
                 && k.distinguished_bits.is_none()
-                && k.max_points.is_none(),
+                && k.max_points.is_none()
+                && !k.cooperative,
             "kangaroo parameters require --method kangaroo"
         );
     }

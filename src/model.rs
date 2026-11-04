@@ -198,7 +198,7 @@ impl SearchSpec {
                 "kangaroo work units must contain one logical attempt"
             );
             ensure!(
-                config.state_version == 1,
+                matches!(config.state_version, 1 | 2),
                 "incompatible kangaroo state version"
             );
             ensure!(

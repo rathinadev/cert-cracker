@@ -67,6 +67,148 @@ fn config() -> KangarooOptions {
 }
 
 #[test]
+fn cooperative_collisions_survive_restart_for_both_checkpoint_orders() {
+    for reverse in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let t = target("P-256", 14u8.into());
+        let k = KangarooOptions {
+            cooperative: true,
+            attempts: Some(2),
+            steps_per_phase: Some(1),
+            max_points: Some(16),
+            distinguished_bits: Some(0),
+            ..Default::default()
+        };
+        let spec = plan(&t, "1", "17", &k, 2, 16).unwrap();
+        let job;
+        {
+            let mut store = Store::open(dir.path(), true).unwrap();
+            store.import(t.clone()).unwrap();
+            job = store.create_job(&spec).unwrap();
+            let initial = kangaroo::initial_snapshot(&t, &spec).unwrap();
+            store.initialize_kangaroo(job, &spec, &initial).unwrap();
+            store.begin_run(job).unwrap();
+            let first = store.allocate(job).unwrap().unwrap();
+            let second = store.allocate(job).unwrap().unwrap();
+            let mut tame = store.kangaroo_state(job, &first, &spec).unwrap().unwrap();
+            let mut wild = store.kangaroo_state(job, &second, &spec).unwrap().unwrap();
+            // Upper=16 and wild scalar=14 plus attempt-1 offset=2 meet at 16G.
+            let point = tame.point.clone();
+            tame.points.insert(point.clone(), "0x0".into());
+            wild.phase = "wild".into();
+            wild.point = point.clone();
+            wild.wild_points.insert(point, "0x0".into());
+            let entries = if reverse {
+                vec![(&second, &wild), (&first, &tame)]
+            } else {
+                vec![(&first, &tame), (&second, &wild)]
+            };
+            for (unit, state) in entries {
+                store
+                    .save_kangaroo_state(job, unit, &spec, state, false)
+                    .unwrap();
+            }
+        }
+        // Simulate a termination between persisted checkpoint updates and a result.
+        // A concurrently spawning child on Unix can briefly inherit the lock
+        // before exec closes inherited descriptors. Bound the wait so a real
+        // lock leak still fails the test.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut store = loop {
+            match Store::open(dir.path(), true) {
+                Ok(store) => break store,
+                Err(error)
+                    if error.to_string().contains("another coordinator")
+                        && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(5))
+                }
+                Err(error) => panic!("could not reopen checkpoint: {error:#}"),
+            }
+        };
+        let report = search::run(&mut store, job, options(2)).unwrap();
+        assert_eq!(report["status"], "recovered");
+        assert_eq!(
+            store.findings().unwrap()[0]["method"],
+            "ec-kangaroo-cooperative"
+        );
+        let key = dir.path().join("cross.private.pem");
+        store
+            .export_key(report["finding_id"].as_i64().unwrap(), &key)
+            .unwrap();
+        crypto::verify_private(&t, &fs::read(key).unwrap()).unwrap();
+    }
+}
+
+#[test]
+fn cooperative_walks_match_reference_and_respect_resource_limits() {
+    for curve in ["P-256", "P-384", "P-521", "secp256k1"] {
+        for (scalar, recovered) in [
+            (4u32, false),
+            (5, true),
+            (67, true),
+            (118, true),
+            (119, false),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut store = Store::open(dir.path(), true).unwrap();
+            let t = target(curve, scalar.into());
+            let k = KangarooOptions {
+                cooperative: true,
+                ..config()
+            };
+            let spec = plan(&t, "5", "119", &k, 3, 32).unwrap();
+            store.import(t).unwrap();
+            let job = store.create_job(&spec).unwrap();
+            let report = search::run(&mut store, job, options(3)).unwrap();
+            assert_eq!(
+                report["status"] == "recovered",
+                recovered,
+                "{curve}: {scalar}"
+            );
+            assert!(report["covered_candidates"].is_null());
+            if !recovered {
+                assert_eq!(report["outcome"], "probabilistic_budget_exhausted");
+            }
+            assert!(
+                report["walks"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|w| w["wild_distinguished_points"].is_number())
+            );
+        }
+    }
+    let t = target("P-256", 4u8.into());
+    let k = KangarooOptions {
+        cooperative: true,
+        attempts: Some(4),
+        max_points: Some(128),
+        ..Default::default()
+    };
+    let spec = plan(&t, "1", "1000", &k, 1, 10).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path(), true).unwrap();
+    store.import(t).unwrap();
+    let job = store.create_job(&spec).unwrap();
+    assert!(search::run(&mut store, job, options(2)).is_err());
+    assert_eq!(store.status(job).unwrap(), "queued");
+}
+
+#[test]
+fn independent_checkpoint_and_spec_remain_version_one() {
+    let t = target("P-256", 4u8.into());
+    let spec = plan(&t, "1", "1000", &config(), 2, 32).unwrap();
+    assert_eq!(spec.kangaroo.as_ref().unwrap().state_version, 1);
+    let state = kangaroo::initial_snapshot(&t, &spec).unwrap();
+    let json = serde_json::to_string(&state).unwrap();
+    assert!(!json.contains("wild_points"));
+    assert!(!json.contains("wild_table_saturated"));
+    let parsed: kangaroo::Snapshot = serde_json::from_str(&json).unwrap();
+    parsed.validate(&spec, 0).unwrap();
+}
+
+#[test]
 fn differential_four_curves_and_interval_boundaries() {
     for curve in ["P-256", "P-384", "P-521", "secp256k1"] {
         for scalar in [4u32, 5, 6, 15, 65, 117, 118, 119] {
@@ -494,14 +636,15 @@ fn schema_three_bsgs_artifact_and_hash_survive_migration() {
 }
 
 #[cfg(unix)]
-fn killed_walk(phase: &str) {
+fn killed_walk(phase: &str, cooperative: bool) {
     let dir = tempfile::tempdir().unwrap();
     let (certificate, _) = crypto::lab_certificate("P-256", &2_000_000_000_000u64.into()).unwrap();
     let input = dir.path().join("cert.pem");
     fs::write(&input, certificate).unwrap();
     let state = dir.path().join("state");
     let bin = env!("CARGO_BIN_EXE_cert-cracker");
-    let mut child = Command::new(bin)
+    let mut command = Command::new(bin);
+    command
         .arg("--state")
         .arg(&state)
         .args(["search", "--input"])
@@ -526,9 +669,11 @@ fn killed_walk(phase: &str) {
             "--quiet",
         ])
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+        .stderr(Stdio::null());
+    if cooperative {
+        command.arg("--kangaroo-cooperative");
+    }
+    let mut child = command.spawn().unwrap();
     let started = Instant::now();
     let mut observed = None;
     while started.elapsed() < Duration::from_secs(20) {
@@ -577,17 +722,34 @@ fn killed_walk(phase: &str) {
         let new: kangaroo::Snapshot = serde_json::from_str(new).unwrap();
         assert!(old.tame_steps <= new.tame_steps && old.wild_steps <= new.wild_steps);
         assert!(old.points.iter().all(|(p, d)| new.points.get(p) == Some(d)));
+        assert!(
+            old.wild_points
+                .iter()
+                .all(|(p, d)| new.wild_points.get(p) == Some(d))
+        );
     }
 }
 
 #[cfg(unix)]
 #[test]
 fn real_sigkill_tame_phase_and_changed_worker_resume() {
-    killed_walk("tame");
+    killed_walk("tame", false);
 }
 
 #[cfg(unix)]
 #[test]
 fn real_sigkill_wild_phase_and_changed_worker_resume() {
-    killed_walk("wild");
+    killed_walk("wild", false);
+}
+
+#[cfg(unix)]
+#[test]
+fn cooperative_sigkill_tame_phase_and_changed_worker_resume() {
+    killed_walk("tame", true);
+}
+
+#[cfg(unix)]
+#[test]
+fn cooperative_sigkill_wild_phase_and_changed_worker_resume() {
+    killed_walk("wild", true);
 }

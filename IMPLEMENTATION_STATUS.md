@@ -1,8 +1,8 @@
-# Implementation status — 26 October 2026
+# Implementation status — 4 November 2026
 
-Version: **0.3.0 CPU development preview**.
+Version: **0.4.0 CPU development preview**.
 
-The CPU foundation from M1–M3, BSGS and an experimental native interval-kangaroo engine are working. The complete PLAN.md roadmap remains in progress. Cooperative kangaroo herds, compatible external adapters and calibrated estimates remain additional M4 work.
+The CPU foundation from M1–M3, BSGS and experimental independent and cooperative native kangaroo modes are working. The complete PLAN.md roadmap remains in progress. Compatible external adapters, incremental durable map storage and calibrated time estimates remain additional M4 work.
 
 ## Delivered
 
@@ -15,6 +15,8 @@ The CPU foundation from M1–M3, BSGS and an experimental native interval-kangar
 - Memory-bounded BSGS with one shared immutable baby table, parallel giant searches and arbitrary-size interval offsets.
 - Durable table-building manifests, synced artifact publication, integrity validation and resume through both precomputation and searching.
 - Explicit kangaroo planning, bounded independent CPU attempts, distinguished-point capacities and checksummed atomic walk checkpoints.
+- Opt-in cooperative kangaroo with deterministic starting offsets, shared tame/wild distinguished-point collisions and an index reconstructed from committed snapshots.
+- Incremental collision-index updates at checkpoints; SQLite continues to serialize complete per-attempt point maps.
 - Stable logical attempt identities across worker-count changes; probabilistic budget outcomes without exhaustive coverage claims.
 - SQLite 3.54.1 with synchronous FULL transactions, schema migration, coordinator locking and per-work-unit generation/cursor validation.
 - Crash recovery, changed worker count on resume, exact gap-aware coverage and duplicate-plan reuse.
@@ -29,13 +31,14 @@ The CPU foundation from M1–M3, BSGS and an experimental native interval-kangar
 
 - `cargo fmt --all -- --check`: passed.
 - `cargo clippy --all-targets --locked -- -D warnings`: passed.
-- `cargo test --locked`: **40 tests passed** (4 unit tests, 36 integration tests).
+- `cargo test --locked`: **46 tests passed** (5 unit tests, 41 integration tests).
 - Actual SIGKILL of a child search followed by resume with a different worker count: passed; final coverage was exactly the configured range.
 - Actual SIGKILL during BSGS table construction and giant searching: passed, including changed worker counts and ready-table reuse.
 - Differential sequential/BSGS results on four curves, infinity entries, partial final blocks, subgroup-boundary exclusions and large offsets: passed.
 - Corrupt/missing tables, binding mismatches, uncommitted tails, cancellation during validation, memory limits and legacy specification/schema compatibility: tested.
 - Kangaroo differential recovery, deliberately insufficient budgets, saturated point tables, stale generations, phase regression and missing/corrupt/rebound snapshots: passed.
 - Actual SIGKILL during both tame and wild phases followed by changed worker counts: passed.
+- Cooperative cross-attempt collision detection in either checkpoint order, recovery after restart and actual SIGKILL during both walk phases: passed.
 - Uninterrupted versus paused/resumed outside-range searches produced exactly equal final logical kangaroo snapshots.
 - Schema-3 BSGS artifact/hash preservation and resume after schema-4 migration: passed.
 - P-256, P-384, P-521 and secp256k1 weak-key recovery: passed.
@@ -50,6 +53,8 @@ The CPU foundation from M1–M3, BSGS and an experimental native interval-kangar
 The bundled SQLite version was upgraded after reviewing SQLite's documented WAL-reset fix; the application rejects SQLite older than 3.51.3 for its WAL-backed state implementation.
 
 ## Benchmark evidence
+
+Version 0.4 cooperative kangaroo: three repetitions per mode and worker setting, P-256 `[1,1000001)`, target outside the interval, eight logical attempts, 128 points per kind per attempt and a 32 MiB engine budget. Median times were 0.730 seconds for one worker and 0.219 seconds for four workers; the independent mode measured 0.736 and 0.219 seconds respectively. Each run completed 128,000 point additions. This experiment does not establish a recovery-probability advantage or general speedup. The cooperative engine recovered laboratory keys on all four supported curves; each exported public key independently matched its certificate via the separate OpenSSL CLI. Raw data is in `docs/cooperative-benchmark-local.json`.
 
 Version 0.3 kangaroo: three repetitions per worker setting on P-256, interval `[1,1000001)`, target outside the interval, eight fixed logical attempts, 128 tame points per attempt and a 32 MiB engine budget. Median end-to-end time was **0.7141 seconds with one worker** and **0.1982 seconds with four workers**, about **3.60x** local scaling. This measures the same bounded walk work, not exhaustive scalar coverage. Raw data and independent four-curve recovery timings are in `docs/kangaroo-benchmark-local.json`.
 
@@ -75,7 +80,7 @@ Machine: macOS ARM64, 10 logical CPUs. OpenSSL 3.6.4; SQLite 3.54.1; optimized R
 
 ## Remaining roadmap
 
-- Calibrated planner time estimates, cooperative kangaroo herds and compatible external-engine adapters.
+- Calibrated planner time estimates, incremental durable point storage and compatible external-engine adapters.
 - Batch-GCD trees and advanced RSA factorization adapters.
 - Signature nonce analysis and explicit EdDSA seed hypotheses.
 - GPU kernels and actual hardware validation.
@@ -85,13 +90,13 @@ Machine: macOS ARM64, 10 logical CPUs. OpenSSL 3.6.4; SQLite 3.54.1; optimized R
 - Unknown-algorithm metadata preservation beyond what the linked OpenSSL backend can parse.
 - Cross-plan coverage reuse, shared multi-target EC scans and a richer job queue.
 
-CI definitions for Linux, macOS and Windows are provided. GitHub's initial version-0.2 run passed on Linux and macOS. Windows exposed a platform-specific strict-lint failure in directory creation; it and Unix-only test imports have been corrected. Version-0.3 remote results are pending; successful Windows validation is not yet claimed.
+GitHub CI for version 0.3 passed on Linux, macOS and Windows after the Windows lint and resume-test timing fixes. Version 0.4 remote results should be checked in GitHub Actions.
 
 ## Current operational limits
 
 Recovered private keys are stored in a database protected with private Unix permissions; **they are not encrypted at rest**. Export refuses overwrite. RSA audits are short bounded checks and rerun after interruption; resumable long-search support applies to sequential, BSGS and kangaroo EC searches. Only one coordinator mutates a state directory at a time. A killed invocation can leave the last lifecycle status `running` and its elapsed time can be undercounted; resume reclaims its committed work.
 
-BSGS table construction is sequential; giant searching uses multiple cores. Its memory budget covers the table and reserved workspace, not total process RSS. Kangaroo executes independent tame/wild pairs, with strict point capacities and full-map checkpoint writes; it does not implement cooperative collision sharing. Its budget exhaustion cannot exclude an in-range key. Native/runtime baseline RSS and SQLite cache are additional to the reserved kangaroo working set. Estimates do not claim calibrated wall-clock ETA or numeric kangaroo success probability.
+BSGS table construction is sequential; giant searching uses multiple cores. Its memory budget covers the table and reserved workspace, not total process RSS. Kangaroo supports independent tame/wild pairs and opt-in cooperative collision sharing, with strict point capacities and full-map checkpoint writes. Budget exhaustion cannot exclude an in-range key. Native/runtime baseline RSS and SQLite cache are additional to the reserved kangaroo working set. Estimates do not claim calibrated wall-clock ETA or numeric kangaroo success probability.
 
 Schema 4 preserves old sequential/BSGS specification hashes and migrates older databases transactionally; older executables cannot read schema 4. Back up the stopped database and referenced artifacts together. See `docs/BSGS.md` and `docs/KANGAROO.md` for the format and checkpoint contracts.
 
