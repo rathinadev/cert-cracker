@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased fixes
+
+- Open the copied SQLite backup with write access before syncing, as required by Windows.
+- Bound transient lock-reopen retries in parallel vault integration tests.
+
 ## 0.12.0 — 4 November 2026
 
 - Add opt-in bounded product/remainder-tree batch GCD for RSA shared-factor audits, including duplicate handling and a full-modulus GCD fallback.

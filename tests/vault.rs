@@ -7,10 +7,45 @@ use cert_cracker::{
 use openssl::pkey::PKey;
 use std::{
     fs,
+    path::Path,
     sync::{Arc, atomic::AtomicBool},
     time::Duration,
 };
 const PASSWORD: &[u8] = b"correct horse laboratory battery";
+
+// During parallel subprocess tests a freshly spawned child can briefly hold
+// inherited lock handles until exec. Retry only this transient lock error.
+fn open_exclusive(path: &Path) -> Store {
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        match Store::open(path, true) {
+            Ok(store) => return store,
+            Err(error)
+                if error.to_string().contains("another coordinator")
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(5))
+            }
+            Err(error) => panic!("could not open test state: {error:#}"),
+        }
+    }
+}
+
+fn create_backup(source: &Path, destination: &Path) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        match backup::create(source, destination) {
+            Ok(_) => return,
+            Err(error)
+                if error.to_string().contains("another coordinator")
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(5))
+            }
+            Err(error) => panic!("could not create test backup: {error:#}"),
+        }
+    }
+}
 fn target() -> (cert_cracker::model::Target, Vec<u8>) {
     let key = crypto::lab_key("P-256", &42u8.into()).unwrap();
     let public = PKey::public_key_from_der(&key.public_key_to_der().unwrap()).unwrap();
@@ -27,7 +62,7 @@ fn encrypted_findings_unlock_export_backup_and_detect_tampering() {
     let (target, pem) = target();
     let id;
     {
-        let mut store = Store::open(&state, true).unwrap();
+        let mut store = open_exclusive(&state);
         store.import(target.clone()).unwrap();
         store.initialize_vault(PASSWORD).unwrap();
         id = store.record_recovery(&target, None, "test", &pem).unwrap();
@@ -49,9 +84,9 @@ fn encrypted_findings_unlock_export_backup_and_detect_tampering() {
             assert!(!data.windows(pem.len()).any(|w| w == pem));
         }
     }
-    backup::create(&state, &saved).unwrap();
+    create_backup(&state, &saved);
     {
-        let mut store = Store::open(&saved, true).unwrap();
+        let mut store = open_exclusive(&saved);
         assert!(store.unlock_vault(b"wrong password for vault").is_err());
         assert!(
             store
@@ -91,7 +126,7 @@ fn locked_vault_stops_search_before_job_progress_and_plaintext_migration_is_refu
     let (target, pem) = target();
     let job;
     {
-        let mut store = Store::open(&state, true).unwrap();
+        let mut store = open_exclusive(&state);
         let id = store.import(target.clone()).unwrap();
         job = store
             .create_job(&SearchSpec::sequential(id, "1", "100", 10).unwrap())
@@ -99,7 +134,7 @@ fn locked_vault_stops_search_before_job_progress_and_plaintext_migration_is_refu
         store.initialize_vault(PASSWORD).unwrap();
     }
     {
-        let mut store = Store::open(&state, true).unwrap();
+        let mut store = open_exclusive(&state);
         let result = search::run(
             &mut store,
             job,
@@ -115,7 +150,7 @@ fn locked_vault_stops_search_before_job_progress_and_plaintext_migration_is_refu
         assert_eq!(store.report(job).unwrap()["tested_candidates"], "0");
     }
     let other = root.path().join("other");
-    let mut store = Store::open(&other, true).unwrap();
+    let mut store = open_exclusive(&other);
     store.import(target.clone()).unwrap();
     store.record_recovery(&target, None, "test", &pem).unwrap();
     assert!(
@@ -233,7 +268,7 @@ fn cli_vault_init_search_and_export_require_password_file() {
 fn password_rotation_is_atomic_and_preserves_findings() {
     let root = tempfile::tempdir().unwrap();
     let (target, pem) = target();
-    let mut store = Store::open(root.path(), true).unwrap();
+    let mut store = open_exclusive(root.path());
     store.import(target.clone()).unwrap();
     store.initialize_vault(PASSWORD).unwrap();
     let a = store.record_recovery(&target, None, "first", &pem).unwrap();
@@ -273,7 +308,7 @@ fn password_rotation_is_atomic_and_preserves_findings() {
     assert_eq!(store.rotate_vault_password(new_password).unwrap(), 2);
     assert_ne!(get(&store, a), first);
     drop(store);
-    let mut store = Store::open(root.path(), true).unwrap();
+    let mut store = open_exclusive(root.path());
     assert!(store.unlock_vault(PASSWORD).is_err());
     store.unlock_vault(new_password).unwrap();
     let path = root.path().join("rotated.pem");

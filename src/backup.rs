@@ -169,12 +169,21 @@ pub fn create(source: &Path, destination: &Path) -> Result<BackupReport> {
     sync_dir(&parent)?;
     let db = destination.join("state.sqlite");
     drop(private_file(&db)?);
-    store.conn.backup(
-        rusqlite::MAIN_DB,
-        &db,
-        None::<fn(rusqlite::backup::Progress)>,
-    )?;
-    File::open(&db)?.sync_all()?;
+    store
+        .conn
+        .backup(
+            rusqlite::MAIN_DB,
+            &db,
+            None::<fn(rusqlite::backup::Progress)>,
+        )
+        .context("copying SQLite backup")?;
+    // Windows FlushFileBuffers requires a handle opened with write access.
+    OpenOptions::new()
+        .write(true)
+        .open(&db)
+        .context("opening copied SQLite backup for sync")?
+        .sync_all()
+        .context("syncing copied SQLite backup")?;
     let check =
         rusqlite::Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let integrity: String = check.query_row("PRAGMA integrity_check", [], |r| r.get(0))?;
@@ -208,10 +217,10 @@ pub fn create(source: &Path, destination: &Path) -> Result<BackupReport> {
             let name = entry.file_name();
             let text = name.to_str().context("artifact file name is not UTF-8")?;
             let output: PathBuf = target.join(&name);
-            let mut src = File::open(input)?;
+            let mut src = File::open(input).context("opening source artifact")?;
             let mut dst = private_file(&output)?;
-            std::io::copy(&mut src, &mut dst)?;
-            dst.sync_all()?;
+            std::io::copy(&mut src, &mut dst).context("copying artifact")?;
+            dst.sync_all().context("syncing copied artifact")?;
             artifacts.push(digest(&output, format!("artifacts/{text}"))?);
         }
         sync_dir(&target)?;
@@ -228,7 +237,9 @@ pub fn create(source: &Path, destination: &Path) -> Result<BackupReport> {
     serde_json::to_writer_pretty(&mut file, &report)?;
     writeln!(file)?;
     file.as_file().sync_all()?;
-    file.persist_noclobber(&marker).map_err(|e| e.error)?;
+    file.persist_noclobber(&marker)
+        .map_err(|e| e.error)
+        .context("publishing backup completion marker")?;
     sync_dir(&destination)?;
     drop(lock);
     Ok(report)
