@@ -84,7 +84,7 @@ Machine: macOS ARM64, 10 logical CPUs. OpenSSL 3.6.4; SQLite 3.54.1; optimized R
 
 ## Remaining roadmap
 
-- Compatible external-engine adapters.
+- Compatible external-engine adapters; see `docs/ECM_EVALUATION.md` for the GMP-ECM local evaluation and checkpoint limitations.
 - Advanced RSA factorization adapters and broader batch-GCD scaling validation.
 - Broader signature nonce-bias analysis and explicit EdDSA seed hypotheses.
 - GPU kernels and actual hardware validation.
